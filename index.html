@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Help Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F8FA;
+  --surface:#FFFFFF;
+  --border:#E4E7EC;
+  --text:#0F1724;
+  --text2:#4B5565;
+  --green:#16A37F;
+  --shadow-sm:0 1px 2px rgba(15,23,36,.06);
+}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;padding:0 24px;gap:12px;box-shadow:var(--shadow-sm)}
+.hdr-logo{width:32px;height:32px;background:var(--green);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
+.wrap{max-width:520px;margin:0 auto;padding:80px 24px;text-align:center}
+.wrap h1{font-size:22px;font-weight:600;margin-bottom:10px}
+.wrap p{color:var(--text2);font-size:14px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-logo">
+    <svg width="17" height="17" fill="none" viewBox="0 0 24 24">
+      <path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/>
+    </svg>
+  </div>
+  <span class="hdr-name">Jet City IT Help Desk</span>
+</div>
+<div class="wrap">
+  <h1>Help Desk</h1>
+  <p>This site is under construction. Check back soon.</p>
+</div>
+</body>
+</html>

@@ -12,11 +12,8 @@ const {
   buildTrackingLink,
 } = require('../lib/clientAccess');
 const { audit } = require('../lib/audit');
-
-function clientIp(request) {
-  const fwd = request.headers.get('x-forwarded-for') || '';
-  return fwd.split(',')[0].trim() || 'unknown';
-}
+const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
+const { clientIp } = require('../lib/ip');
 
 function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -43,6 +40,7 @@ function messageToClientJson(m) {
   return {
     from: m.authorType === 'staff' ? 'staff' : 'you',
     body: m.body,
+    attachments: parseAttachments(m.attachmentsJson),
     createdAt: m.createdAt,
   };
 }
@@ -177,6 +175,9 @@ app.http('clientTicketReply', {
         return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
       }
 
+      const tooLarge = rejectIfTooLarge(request);
+      if (tooLarge) return tooLarge;
+
       const body = await request.json().catch(() => ({}));
       const email = String(body.email || '');
       const token = String(body.token || '');
@@ -200,24 +201,39 @@ app.http('clientTicketReply', {
         return { status: 404, jsonBody: { error: 'Ticket not found' } };
       }
 
-      const now = new Date().toISOString();
-      await table.createEntity({
-        partitionKey: ticketId,
-        rowKey: genMessageRowKey(),
-        kind: 'message',
-        authorType: 'client',
-        authorName: meta.name,
-        authorUpn: '',
-        body: text,
-        createdAt: now,
-      });
+      let attachments;
+      try {
+        attachments = await storeAttachments(ticketId, body.attachments);
+      } catch (e) {
+        if (e instanceof AttachmentError) throw new AuthError(400, e.message);
+        throw e;
+      }
 
-      // A client following up means it needs another look regardless of what
-      // it was parked at (Pending/Resolved/Closed) -- staff can re-triage
-      // from Open rather than the reply going unnoticed in a closed ticket.
-      const update = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
-      if (meta.status !== 'Open') update.status = 'Open';
-      await table.updateEntity(update, 'Merge');
+      const now = new Date().toISOString();
+      try {
+        await table.createEntity({
+          partitionKey: ticketId,
+          rowKey: genMessageRowKey(),
+          kind: 'message',
+          authorType: 'client',
+          authorName: meta.name,
+          authorUpn: '',
+          body: text,
+          attachmentsJson: attachments.length ? JSON.stringify(attachments) : '',
+          createdAt: now,
+        });
+
+        // A client following up means it needs another look regardless of
+        // what it was parked at (Pending/Resolved/Closed) -- staff can
+        // re-triage from Open rather than the reply going unnoticed in a
+        // closed ticket.
+        const update = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
+        if (meta.status !== 'Open') update.status = 'Open';
+        await table.updateEntity(update, 'Merge');
+      } catch (e) {
+        await deleteAttachments(ticketId, attachments);
+        throw e;
+      }
 
       audit(context, null, 'ticket.clientReply', { ticketId });
 
@@ -231,6 +247,61 @@ app.http('clientTicketReply', {
       }
 
       return { status: 201, jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+app.http('clientAttachmentGet', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'client/tickets/{ticketId}/attachments/{attachmentId}',
+  handler: async (request, context) => {
+    try {
+      // Its own bucket, separate from clientTicketsList/clientTicketGet's
+      // 'client-view-ip' -- a single ticket view can cost 1 (get) + up to 4
+      // (attachments) requests, so sharing one budget let heavy attachment
+      // viewing 429 an unrelated client behind the same office NAT/proxy IP
+      // who was just trying to open their own ticket list.
+      const ip = clientIp(request);
+      const rl = checkRateLimit('client-attachment-ip:' + ip, 120, 60 * 1000);
+      if (!rl.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
+      }
+
+      const email = request.query.get('email') || '';
+      const token = request.query.get('token') || '';
+      await verifyClientToken(email, token);
+
+      const { ticketId, attachmentId } = request.params;
+      await ensureTable();
+      const table = getClient();
+      let meta;
+      try {
+        meta = await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Attachment not found' } };
+        throw e;
+      }
+      // Same ownership re-check as clientTicketGet -- a valid token for one
+      // address must never unlock another ticket's attachments.
+      if (normalizeEmail(meta.email) !== normalizeEmail(email)) {
+        return { status: 404, jsonBody: { error: 'Attachment not found' } };
+      }
+
+      const result = await downloadAttachment(ticketId, attachmentId);
+      if (!result) return { status: 404, jsonBody: { error: 'Attachment not found' } };
+      return {
+        status: 200,
+        headers: {
+          'Content-Type': result.contentType,
+          'Cache-Control': 'private, max-age=3600',
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Disposition': `inline; filename="${attachmentId}"`,
+        },
+        body: result.buffer,
+      };
     } catch (e) {
       return authErrorResponse(e, context);
     }

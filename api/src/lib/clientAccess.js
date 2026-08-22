@@ -16,6 +16,20 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+// Plain !== short-circuits at the first differing character, leaking a
+// timing signal correlated with how many leading characters a guess got
+// right -- this is the one secret the whole client-auth model rests on
+// (ticket IDs are guessable, see genTicketId), so it's worth comparing
+// properly. crypto.timingSafeEqual needs equal-length buffers, which two
+// arbitrary strings aren't guaranteed to be -- hashing both first sidesteps
+// that without weakening the comparison (a mismatched token still can't
+// produce a matching digest).
+function safeTokenEqual(a, b) {
+  const bufA = crypto.createHash('sha256').update(String(a)).digest();
+  const bufB = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 // Table Storage RowKeys reject '/', '\\', '#', '?' and control characters --
 // none of which are valid in an email address anyway, so a normalized email
 // is always safe to use as one directly.
@@ -56,7 +70,7 @@ async function verifyClientToken(email, token) {
     if (e.statusCode === 404) throw new AuthError(403, 'Invalid access token');
     throw e;
   }
-  if (row.token !== token) throw new AuthError(403, 'Invalid access token');
+  if (!safeTokenEqual(row.token, token)) throw new AuthError(403, 'Invalid access token');
   return key;
 }
 

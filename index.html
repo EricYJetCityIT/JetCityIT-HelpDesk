@@ -60,6 +60,13 @@ a{color:var(--green-dark)}
 .confirm h2{font-size:19px;margin-bottom:8px}
 .confirm p{color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:14px}
 .confirm .ticket-id{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-weight:700;font-size:16px;letter-spacing:.5px;margin-bottom:6px}
+
+.file-hint{font-size:12px;color:var(--text3);margin-top:6px}
+.file-list{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.file-chip{position:relative;width:72px}
+.file-chip img{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;background:var(--bg)}
+.file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
 </style>
 </head>
 <body>
@@ -107,6 +114,12 @@ a{color:var(--green-dark)}
           <label for="f-description">Describe the issue <span class="req">*</span></label>
           <textarea id="f-description" name="description" maxlength="5000" required></textarea>
         </div>
+        <div class="field">
+          <label for="f-attachments">Attach screenshots (optional)</label>
+          <input type="file" id="f-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+          <div class="file-hint">Up to 4 images, 4 MB each.</div>
+          <div class="file-list" id="file-list"></div>
+        </div>
         <div class="field hp" aria-hidden="true">
           <label for="f-website">Website</label>
           <input type="text" id="f-website" name="website" tabindex="-1" autocomplete="off"/>
@@ -128,6 +141,62 @@ a{color:var(--green-dark)}
 </div>
 
 <script>
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+const MAX_FILES = 4;
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
+let selectedFiles = [];
+
+function renderFileList(){
+  const wrap = document.getElementById('file-list');
+  wrap.innerHTML = selectedFiles.map(function(f, i){
+    return '<div class="file-chip">' +
+      '<img src="' + URL.createObjectURL(f) + '" alt=""/>' +
+      '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '">×</button>' +
+      '<div class="name">' + escapeHtml(f.name) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+document.getElementById('f-attachments').addEventListener('change', function(e){
+  const picked = Array.prototype.slice.call(e.target.files);
+  for (const f of picked) {
+    if (selectedFiles.length >= MAX_FILES) {
+      errEl.textContent = 'Only up to ' + MAX_FILES + ' images can be attached.';
+      errEl.style.display = 'block';
+      break;
+    }
+    if (f.size > MAX_FILE_BYTES) {
+      errEl.textContent = f.name + ' is larger than 4 MB and was skipped.';
+      errEl.style.display = 'block';
+      continue;
+    }
+    selectedFiles.push(f);
+  }
+  e.target.value = ''; // clear so picking again adds to, rather than replaces, the selection
+  renderFileList();
+});
+
+document.getElementById('file-list').addEventListener('click', function(e){
+  const btn = e.target.closest('.remove');
+  if (!btn) return;
+  selectedFiles.splice(Number(btn.dataset.i), 1);
+  renderFileList();
+});
+
+function fileToBase64(file){
+  return new Promise(function(resolve, reject){
+    const reader = new FileReader();
+    reader.onload = function(){ resolve(String(reader.result).split(',')[1] || ''); };
+    reader.onerror = function(){ reject(new Error('Could not read ' + file.name)); };
+    reader.readAsDataURL(file);
+  });
+}
+
 const form = document.getElementById('ticket-form');
 const submitBtn = document.getElementById('submit-btn');
 const errEl = document.getElementById('err-msg');
@@ -138,6 +207,19 @@ form.addEventListener('submit', async function(e){
   submitBtn.disabled = true;
   submitBtn.textContent = 'Submitting…';
 
+  let attachments;
+  try {
+    attachments = await Promise.all(selectedFiles.map(async function(f){
+      return { fileName: f.name, dataBase64: await fileToBase64(f) };
+    }));
+  } catch (err) {
+    errEl.textContent = 'Could not read an attached file. Please try again.';
+    errEl.style.display = 'block';
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit request';
+    return;
+  }
+
   const payload = {
     name: document.getElementById('f-name').value,
     email: document.getElementById('f-email').value,
@@ -145,6 +227,7 @@ form.addEventListener('submit', async function(e){
     subject: document.getElementById('f-subject').value,
     description: document.getElementById('f-description').value,
     website: document.getElementById('f-website').value, // honeypot
+    attachments: attachments,
   };
 
   try {
@@ -161,6 +244,7 @@ form.addEventListener('submit', async function(e){
       submitBtn.textContent = 'Submit request';
       return;
     }
+    selectedFiles = [];
     document.getElementById('confirm-ticket-id').textContent = data.ticketId;
     document.getElementById('form-view').style.display = 'none';
     document.getElementById('confirm-view').style.display = 'block';

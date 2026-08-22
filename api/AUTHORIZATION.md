@@ -68,6 +68,77 @@ Client-facing responses omit internal fields (`assignee`, staff UPNs) —
 staff messages are attributed simply to "Jet City IT Help Desk", not the
 individual technician.
 
+## Image attachments
+
+Clients and staff can both attach up to 4 images (PNG/JPEG/GIF/WEBP, 4 MB
+each, 12 MB combined) to a ticket-creation, staff-reply, or client-reply
+request — sent as base64 in the same JSON body (`attachments: [{fileName,
+dataBase64}]`), not a separate upload call. Storage/validation lives in
+`api/src/lib/attachments.js`.
+
+- **Never trust the client's declared type.** Every upload is classified by
+  its actual file-signature bytes (`sniffImageType`), and the *sniffed* type
+  is what gets stored and served — a request claiming `image/png` for
+  anything else is rejected outright. `image/svg+xml` is deliberately not a
+  supported type: an SVG can carry a `<script>`, making it an XSS vector the
+  moment it's rendered or linked to.
+- **Blob names are always server-generated** (random 24-hex-char id + a
+  whitelisted extension), never derived from the client's filename — the
+  filename is kept only as a display label (HTML-escaped on render, length-
+  capped), never used to build a storage path.
+- **Storage is a private Blob container** (`attachments`, in the same
+  storage account as the `Tickets` table, created with no `access` option =
+  no anonymous read) in the *same* storage account as the `Tickets` table.
+  There is no direct/public blob URL anywhere in the frontend — every image
+  is streamed back through an authenticated Function endpoint that applies
+  the exact same authorization as viewing the ticket itself:
+  - Staff: `GET /api/tickets/{id}/attachments/{attachmentId}` — gated by
+    `requireStaff`, same as every other staff route.
+  - Client: `GET /api/client/tickets/{id}/attachments/{attachmentId}?email=&token=`
+    — validates the token AND re-checks the ticket's `email` matches, so a
+    valid token for one address can never fetch another client's images.
+- The staff console fetches attachment bytes via the bearer-token-authed
+  `apiFetchBlob` helper and displays them via `blob:` object URLs (CSP
+  `img-src` includes `blob:` for this). The client portal's token travels in
+  the query string already, so it uses a plain `<img src>` pointed straight
+  at the download URL — no JS-fetch indirection needed there.
+- Known limitation: attachments are never deleted (no ticket-deletion
+  feature exists yet either), so blob storage grows unbounded over time —
+  acceptable at this volume/cost, revisit if that changes.
+
+**Hardening applied after an adversarial security review** of this feature
+(10 findings confirmed, all addressed):
+- `Content-Length` is checked and the request rejected (413) *before*
+  `request.json()` ever reads/parses the body, on all three
+  attachment-accepting endpoints — otherwise an oversized body would be
+  fully buffered/parsed in memory before any size check could run.
+- If any file partway through a batch fails validation, or the Table
+  Storage write that actually attaches the stored files to a ticket/message
+  fails afterward, the already-uploaded blobs for that request are deleted
+  rather than left as permanent orphans (`deleteAttachments`).
+- The staff-reply endpoint now confirms the ticket exists *before* storing
+  attachments or writing the message row (matching the client-reply
+  endpoint's ordering) — previously a typo'd/made-up ticket ID could still
+  upload real blobs into a partition with no meta row to ever surface them.
+- Both attachment-download responses set `X-Content-Type-Options: nosniff`
+  and `Content-Disposition: inline` explicitly — Azure's global security
+  headers (`staticwebapp.config.json`) don't reach API/Function responses
+  at all, so these routes no longer implicitly relied on that.
+- `clientIp()` (`api/src/lib/ip.js`, shared by every rate-limited route) now
+  reads the *last* `X-Forwarded-For` entry instead of the first — the first
+  is whatever the client itself claimed and is trivially spoofable to
+  defeat every IP-keyed rate limit in the app.
+- `requireStaff()` now rate-limits by IP *before* verifying the JWT, so
+  flooding a staff-gated route (attachment downloads included) with garbage
+  bearer tokens no longer gets zero throttling.
+- `clientAttachmentGet` has its own rate-limit bucket, separate from
+  `clientTicketsList`/`clientTicketGet` — viewing one ticket's images no
+  longer draws down the same budget a different client behind the same
+  office NAT/proxy needs just to see their own ticket list.
+- The client access token comparison uses a timing-safe (hash-then-compare)
+  check instead of `!==`, since it's the one real secret the whole
+  client-auth model depends on (ticket IDs are guessable).
+
 ## Email notifications
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a
@@ -104,3 +175,10 @@ to go looking for it separately.
   a link for an email with no tickets → same generic `{ok:true}` response,
   no email sent. Try a tampered/guessed token → 403, page prompts to
   request a new link.
+- **Attachments**: attach a PNG/JPEG to a new ticket, a staff reply, and a
+  client reply → each shows a thumbnail in both the staff console and
+  `/track.html`, clickable to view full-size. Rename a non-image file to
+  `.png` and attach it → rejected (signature sniffing catches it regardless
+  of the claimed type). Attach a 5+ file / oversized payload → 400 with a
+  clear message, nothing written. Try fetching another ticket's attachment
+  URL with a valid token for a *different* email → 404.

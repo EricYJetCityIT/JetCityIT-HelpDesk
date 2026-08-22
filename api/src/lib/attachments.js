@@ -1,0 +1,210 @@
+const crypto = require('crypto');
+const { BlobServiceClient } = require('@azure/storage-blob');
+
+const CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
+const CONTAINER_NAME = 'attachments';
+
+const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4 MB per image
+const MAX_FILES_PER_MESSAGE = 4;
+const MAX_TOTAL_BYTES_PER_MESSAGE = 12 * 1024 * 1024; // guard against many files each near the per-file cap
+// Headroom over MAX_TOTAL_BYTES_PER_MESSAGE for base64 inflation (~4/3x)
+// plus the rest of the JSON payload (name/subject/description/etc) --
+// checked against Content-Length BEFORE the body is read/parsed, so an
+// oversized request is rejected without ever buffering it into memory.
+const MAX_REQUEST_BODY_BYTES = 18 * 1024 * 1024;
+
+// image/svg+xml is deliberately not in this list -- an SVG can carry
+// embedded <script>, making it an XSS vector if ever rendered or linked
+// to directly, which is exactly what attachment viewing does.
+const EXT_TO_TYPE = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+const ATTACHMENT_ID_RE = /^[0-9a-f]{24}\.(png|jpg|gif|webp)$/;
+
+let containerClient;
+let ensured;
+
+function getContainerClient() {
+  if (!containerClient) {
+    if (!CONNECTION_STRING) throw new Error('AZURE_STORAGE_CONNECTION_STRING is not configured');
+    containerClient = BlobServiceClient.fromConnectionString(CONNECTION_STRING).getContainerClient(CONTAINER_NAME);
+  }
+  return containerClient;
+}
+
+// Created with no `access` option, which the REST API treats as fully
+// private (no anonymous read) -- attachments are only ever served back
+// through our own authenticated/token-checked download endpoints, never
+// a direct blob URL.
+async function ensureContainer() {
+  if (!ensured) {
+    ensured = getContainerClient()
+      .createIfNotExists()
+      .catch((e) => {
+        ensured = null; // allow a retry on the next call instead of caching a failure forever
+        throw e;
+      });
+  }
+  return ensured;
+}
+
+class AttachmentError extends Error {}
+
+// Checked before request.json() ever reads/parses the body, so an
+// oversized request is rejected on the Content-Length header alone --
+// otherwise a huge body would be fully buffered and JSON-parsed in memory
+// before any of the size checks below could ever run. Returns a ready-made
+// 413 response, or null if the request should proceed.
+function rejectIfTooLarge(request) {
+  const len = parseInt(request.headers.get('content-length') || '', 10);
+  if (len > MAX_REQUEST_BODY_BYTES) {
+    return { status: 413, jsonBody: { error: 'Request is too large.' } };
+  }
+  return null;
+}
+
+// Classifies by the actual file bytes, never the client-declared content
+// type (which is attacker-controlled input) -- a request claiming
+// "image/png" for an HTML/JS payload is rejected here regardless of what
+// header or field it arrived with.
+function sniffImageType(buf) {
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+    buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+  ) {
+    return { contentType: 'image/png', ext: 'png' };
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return { contentType: 'image/jpeg', ext: 'jpg' };
+  }
+  if (
+    buf.length >= 6 &&
+    buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38 &&
+    (buf[4] === 0x37 || buf[4] === 0x39) && buf[5] === 0x61
+  ) {
+    return { contentType: 'image/gif', ext: 'gif' };
+  }
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) {
+    return { contentType: 'image/webp', ext: 'webp' };
+  }
+  return null;
+}
+
+// Validates and stores one client-submitted attachment. `raw` is
+// { fileName, dataBase64 }. Returns metadata only -- no raw bytes -- for
+// embedding in the message entity/API response.
+async function storeAttachment(ticketId, raw) {
+  const base64 = String((raw && raw.dataBase64) || '');
+  // Cheap pre-check before the decode: base64 runs ~4/3 the size of the
+  // decoded bytes, so this rejects grossly oversized payloads up front.
+  if (base64.length > MAX_FILE_BYTES * 1.4) {
+    throw new AttachmentError('Each image must be 4 MB or smaller.');
+  }
+
+  const buf = Buffer.from(base64, 'base64');
+  if (!buf.length) throw new AttachmentError('An attachment was empty.');
+  if (buf.length > MAX_FILE_BYTES) throw new AttachmentError('Each image must be 4 MB or smaller.');
+
+  const sniffed = sniffImageType(buf);
+  if (!sniffed) throw new AttachmentError('Only PNG, JPEG, GIF, or WEBP images are allowed.');
+
+  const id = `${crypto.randomBytes(12).toString('hex')}.${sniffed.ext}`;
+  await ensureContainer();
+  await getContainerClient()
+    .getBlockBlobClient(`${ticketId}/${id}`)
+    .uploadData(buf, { blobHTTPHeaders: { blobContentType: sniffed.contentType } });
+
+  const fileName = String((raw && raw.fileName) || 'image').trim().slice(0, 150) || 'image';
+  return { id, fileName, contentType: sniffed.contentType, size: buf.length };
+}
+
+// Best-effort delete -- an orphaned blob is a storage-cost/hygiene issue,
+// not a security one, so a failed cleanup here must never mask or replace
+// whatever original error triggered it.
+async function deleteBlob(ticketId, id) {
+  try {
+    await ensureContainer();
+    await getContainerClient().getBlockBlobClient(`${ticketId}/${id}`).deleteIfExists();
+  } catch (e) {
+    // swallow -- see comment above
+  }
+}
+
+// Deletes a set of already-stored attachments (as returned by
+// storeAttachments). Exposed for callers that store attachments
+// successfully but then fail a later step (e.g. the Table Storage writes
+// that actually attach them to a ticket/message), so those blobs don't
+// outlive the ticket/message that was supposed to reference them.
+async function deleteAttachments(ticketId, attachments) {
+  await Promise.all((attachments || []).map((a) => deleteBlob(ticketId, a.id)));
+}
+
+// `rawList` is whatever the client sent as `attachments` on a ticket
+// create/reply request. Validated as a whole (count + combined size)
+// BEFORE any individual file is uploaded, so an oversized/over-count
+// request fails fast without uploading anything. If a LATER file in the
+// same batch fails once uploading is under way, the earlier files already
+// stored in this call are cleaned up before the error propagates, rather
+// than left as permanent orphans.
+async function storeAttachments(ticketId, rawList) {
+  if (rawList == null) return [];
+  if (!Array.isArray(rawList)) throw new AttachmentError('Invalid attachments.');
+  if (rawList.length > MAX_FILES_PER_MESSAGE) {
+    throw new AttachmentError(`Attach at most ${MAX_FILES_PER_MESSAGE} images per message.`);
+  }
+  const approxTotalBytes = rawList.reduce((sum, r) => sum + String((r && r.dataBase64) || '').length * 0.75, 0);
+  if (approxTotalBytes > MAX_TOTAL_BYTES_PER_MESSAGE) {
+    throw new AttachmentError('Attachments are too large combined (max 12 MB total).');
+  }
+
+  const stored = [];
+  try {
+    for (const raw of rawList) {
+      stored.push(await storeAttachment(ticketId, raw));
+    }
+  } catch (e) {
+    await deleteAttachments(ticketId, stored);
+    throw e;
+  }
+  return stored;
+}
+
+// Blob names are always server-generated (random hex + a whitelisted
+// extension), so this is not a real path-traversal vector, but the format
+// is still validated since attachmentId ultimately comes from a URL segment.
+async function downloadAttachment(ticketId, attachmentId) {
+  if (!ATTACHMENT_ID_RE.test(attachmentId)) return null;
+  const ext = attachmentId.slice(attachmentId.lastIndexOf('.') + 1);
+  await ensureContainer();
+  try {
+    const buffer = await getContainerClient().getBlockBlobClient(`${ticketId}/${attachmentId}`).downloadToBuffer();
+    return { buffer, contentType: EXT_TO_TYPE[ext] };
+  } catch (e) {
+    if (e.statusCode === 404) return null;
+    throw e;
+  }
+}
+
+function parseAttachments(json) {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+module.exports = {
+  storeAttachments,
+  deleteAttachments,
+  downloadAttachment,
+  parseAttachments,
+  rejectIfTooLarge,
+  AttachmentError,
+  MAX_FILE_BYTES,
+  MAX_FILES_PER_MESSAGE,
+};

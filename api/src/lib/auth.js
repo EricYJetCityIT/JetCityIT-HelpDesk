@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const { checkRateLimit } = require('./ratelimit');
+const { clientIp } = require('./ip');
 
 const TENANT_ID = process.env.AAD_TENANT_ID;
 const CLIENT_ID = process.env.AAD_CLIENT_ID;
@@ -66,6 +67,18 @@ class AuthError extends Error {
 // internal SWA-to-Function service token and overwrites whatever the client
 // sends, so a client-supplied Authorization header never reaches this code.
 async function requireStaff(request) {
+  // Every public/client route in this app rate-limits by IP as its first
+  // step, before doing any real work. This one didn't: the UPN-keyed limit
+  // below only ever runs after a token has already passed full JWT
+  // signature/issuer/audience verification, so a flood of garbage/expired
+  // bearer tokens got zero throttling. Cheap IP check first closes that gap
+  // without weakening the UPN-keyed limit staff themselves are subject to.
+  const ip = clientIp(request);
+  const ipLimit = checkRateLimit('staff-auth-ip:' + ip, 30, 60 * 1000);
+  if (!ipLimit.allowed) {
+    throw new AuthError(429, 'Too many requests — please slow down.', { retryAfterSec: ipLimit.retryAfterSec });
+  }
+
   const header = request.headers.get('x-jetcity-authorization') || '';
   const match = header.match(/^Bearer (.+)$/i);
   if (!match) throw new AuthError(401, 'Missing bearer token');

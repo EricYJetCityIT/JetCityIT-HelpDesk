@@ -5,13 +5,10 @@ const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
+const { storeAttachments, deleteAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
+const { clientIp } = require('../lib/ip');
 
 const MAX_LEN = { name: 120, email: 200, company: 150, subject: 200, description: 5000 };
-
-function clientIp(request) {
-  const fwd = request.headers.get('x-forwarded-for') || '';
-  return fwd.split(',')[0].trim() || 'unknown';
-}
 
 function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -37,6 +34,9 @@ app.http('ticketsCreate', {
         };
       }
 
+      const tooLarge = rejectIfTooLarge(request);
+      if (tooLarge) return tooLarge;
+
       const body = await request.json().catch(() => ({}));
 
       // Classic honeypot: a field hidden from real users via CSS that bots
@@ -61,31 +61,48 @@ app.http('ticketsCreate', {
       const ticketId = genTicketId();
       const now = new Date().toISOString();
 
-      await table.createEntity({
-        partitionKey: ticketId,
-        rowKey: '0',
-        kind: 'meta',
-        status: 'Open',
-        priority: 'Normal',
-        name,
-        email,
-        company,
-        subject,
-        assignee: '',
-        createdAt: now,
-        updatedAt: now,
-      });
+      let attachments;
+      try {
+        attachments = await storeAttachments(ticketId, body.attachments);
+      } catch (e) {
+        if (e instanceof AttachmentError) return { status: 400, jsonBody: { error: e.message } };
+        throw e;
+      }
 
-      await table.createEntity({
-        partitionKey: ticketId,
-        rowKey: genMessageRowKey(),
-        kind: 'message',
-        authorType: 'client',
-        authorName: name,
-        authorUpn: '',
-        body: description,
-        createdAt: now,
-      });
+      try {
+        await table.createEntity({
+          partitionKey: ticketId,
+          rowKey: '0',
+          kind: 'meta',
+          status: 'Open',
+          priority: 'Normal',
+          name,
+          email,
+          company,
+          subject,
+          assignee: '',
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        await table.createEntity({
+          partitionKey: ticketId,
+          rowKey: genMessageRowKey(),
+          kind: 'message',
+          authorType: 'client',
+          authorName: name,
+          authorUpn: '',
+          body: description,
+          attachmentsJson: attachments.length ? JSON.stringify(attachments) : '',
+          createdAt: now,
+        });
+      } catch (e) {
+        // The attachments already uploaded successfully -- if the ticket
+        // itself then fails to persist, don't leave those blobs behind
+        // referencing a ticket that will never exist.
+        await deleteAttachments(ticketId, attachments);
+        throw e;
+      }
 
       audit(context, null, 'ticket.create', { ticketId, ip });
 

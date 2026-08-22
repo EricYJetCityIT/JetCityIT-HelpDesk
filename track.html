@@ -92,6 +92,16 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .reply-send-btn{padding:9px 18px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:14px}
 .reply-send-btn:hover{background:var(--green-dark)}
 .reply-send-btn:disabled{opacity:.6}
+
+.attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.attachment-thumb{display:block;width:64px;height:64px;border-radius:8px;border:1px solid var(--border);background:var(--bg);overflow:hidden}
+.attachment-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.file-hint{font-size:12px;color:var(--text3);margin:6px 0}
+.file-list{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px}
+.file-chip{position:relative;width:64px}
+.file-chip img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;background:var(--bg)}
+.file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
 </style>
 </head>
 <body>
@@ -151,6 +161,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="field">
       <textarea id="reply-body" placeholder="Add a reply…"></textarea>
     </div>
+    <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+    <div class="file-hint">Up to 4 images, 4 MB each.</div>
+    <div class="file-list" id="reply-file-list"></div>
     <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
   </div>
 </div>
@@ -300,6 +313,7 @@ async function openTicket(id){
       return '<div class="msg ' + cls + '">' +
         '<div class="msg-head"><span>' + who + '</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
         '<div class="msg-body">' + escapeHtml(m.body) + '</div>' +
+        attachmentsHtml(t.ticketId, m.attachments) +
       '</div>';
     }).join('');
   } catch (e) {
@@ -311,7 +325,62 @@ async function openTicket(id){
   }
 }
 
+// The token travels in the query string (same as any other /api/client/*
+// call), so a plain <img src> can authenticate directly -- no JS-fetch +
+// blob: URL indirection needed here, unlike the staff console's
+// bearer-header auth.
+function attachmentsHtml(ticketId, attachments){
+  if (!attachments || !attachments.length) return '';
+  return '<div class="attachments">' + attachments.map(function(a){
+    const url = '/api/client/tickets/' + encodeURIComponent(ticketId) + '/attachments/' + encodeURIComponent(a.id) +
+      '?email=' + encodeURIComponent(session.email) + '&token=' + encodeURIComponent(session.token);
+    return '<a class="attachment-thumb" href="' + escapeHtml(url) + '" target="_blank" title="' + escapeHtml(a.fileName) + '"><img src="' + escapeHtml(url) + '" alt="' + escapeHtml(a.fileName) + '"/></a>';
+  }).join('') + '</div>';
+}
+
 document.getElementById('back-btn').addEventListener('click', loadTicketList);
+
+// ── Reply attachments ──
+const MAX_REPLY_FILES = 4;
+const MAX_REPLY_FILE_BYTES = 4 * 1024 * 1024;
+let replySelectedFiles = [];
+
+function renderReplyFileList(){
+  document.getElementById('reply-file-list').innerHTML = replySelectedFiles.map(function(f, i){
+    return '<div class="file-chip">' +
+      '<img src="' + URL.createObjectURL(f) + '" alt=""/>' +
+      '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '">×</button>' +
+      '<div class="name">' + escapeHtml(f.name) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+document.getElementById('reply-attachments').addEventListener('change', function(e){
+  const picked = Array.prototype.slice.call(e.target.files);
+  for (const f of picked) {
+    if (replySelectedFiles.length >= MAX_REPLY_FILES) break;
+    if (f.size > MAX_REPLY_FILE_BYTES) { alert(f.name + ' is larger than 4 MB and was skipped.'); continue; }
+    replySelectedFiles.push(f);
+  }
+  e.target.value = '';
+  renderReplyFileList();
+});
+
+document.getElementById('reply-file-list').addEventListener('click', function(e){
+  const btn = e.target.closest('.remove');
+  if (!btn) return;
+  replySelectedFiles.splice(Number(btn.dataset.i), 1);
+  renderReplyFileList();
+});
+
+function fileToBase64(file){
+  return new Promise(function(resolve, reject){
+    const reader = new FileReader();
+    reader.onload = function(){ resolve(String(reader.result).split(',')[1] || ''); };
+    reader.onerror = function(){ reject(new Error('Could not read ' + file.name)); };
+    reader.readAsDataURL(file);
+  });
+}
 
 document.getElementById('reply-send-btn').addEventListener('click', async function(){
   const ta = document.getElementById('reply-body');
@@ -320,11 +389,16 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
   const btn = this;
   btn.disabled = true;
   try {
+    const attachments = await Promise.all(replySelectedFiles.map(async function(f){
+      return { fileName: f.name, dataBase64: await fileToBase64(f) };
+    }));
     await clientFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
       method: 'POST',
-      body: { email: session.email, token: session.token, body: text },
+      body: { email: session.email, token: session.token, body: text, attachments: attachments },
     });
     ta.value = '';
+    replySelectedFiles = [];
+    renderReplyFileList();
     await openTicket(currentTicketId);
   } catch (e) {
     alert('Failed to send reply: ' + e.message);

@@ -2,6 +2,9 @@ const { app } = require('@azure/functions');
 const { getClient, ensureTable, genTicketId, genMessageRowKey } = require('../lib/tables');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { audit } = require('../lib/audit');
+const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
+const { escapeHtml } = require('../lib/html');
+const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
 
 const MAX_LEN = { name: 120, email: 200, company: 150, subject: 200, description: 5000 };
 
@@ -85,6 +88,19 @@ app.http('ticketsCreate', {
       });
 
       audit(context, null, 'ticket.create', { ticketId, ip });
+
+      try {
+        const clientToken = await getOrCreateClientToken(email);
+        const link = buildTrackingLink(email, clientToken, ticketId);
+        const html = `<p>Hi ${escapeHtml(name)},</p>
+<p>We've received your ticket and a technician will follow up soon.</p>
+<p><strong>Subject:</strong> ${escapeHtml(subject)}<br/><strong>Ticket:</strong> ${escapeHtml(ticketId)}</p>
+<p><a href="${escapeHtml(link)}">Track this ticket and view your ticket history</a></p>
+<p>— Jet City IT Help Desk</p>`;
+        await sendMail({ from: SUPPORT_MAILBOX, to: email, subject: `We've received your ticket [${ticketId}]`, html });
+      } catch (e) {
+        context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+      }
 
       return { status: 201, jsonBody: { ticketId } };
     } catch (e) {

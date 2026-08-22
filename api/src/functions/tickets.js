@@ -2,17 +2,9 @@ const { app } = require('@azure/functions');
 const { requireStaff, AuthError, authErrorResponse } = require('../lib/auth');
 const { getClient, ensureTable, genMessageRowKey } = require('../lib/tables');
 const { audit } = require('../lib/audit');
-const { sendMail } = require('../lib/graph');
-
-// Shared mailbox for outbound ticket-reply notifications (sign-in disabled,
-// same setup as the crew-calendar app's shared mailboxes). Sending is
-// best-effort: a reply is already saved before this runs, so an email
-// failure is logged, never turned into a failed request.
-const NOTIFY_FROM = 'helpdesk@jetcityit.com';
-
-function escapeHtml(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
+const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
+const { escapeHtml } = require('../lib/html');
+const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
 
 const STATUSES = ['Open', 'Pending', 'Resolved', 'Closed'];
 const PRIORITIES = ['Low', 'Normal', 'High'];
@@ -194,10 +186,13 @@ app.http('ticketReply', {
 
       if (meta && meta.email) {
         try {
+          const clientToken = await getOrCreateClientToken(meta.email);
+          const link = buildTrackingLink(meta.email, clientToken, ticketId);
           const html = `<p>Hi ${escapeHtml(meta.name)},</p>
 <p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+<p><a href="${escapeHtml(link)}">View this ticket and reply online</a></p>
 <p>— Jet City IT Help Desk<br/>Ticket ${escapeHtml(ticketId)}</p>`;
-          await sendMail({ from: NOTIFY_FROM, to: meta.email, subject: `Re: ${meta.subject} [${ticketId}]`, html });
+          await sendMail({ from: SUPPORT_MAILBOX, to: meta.email, subject: `Re: ${meta.subject} [${ticketId}]`, html });
         } catch (e) {
           context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
         }

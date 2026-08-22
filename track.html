@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Track Your Tickets — Jet City IT Help Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F8FA;
+  --surface:#FFFFFF;
+  --border:#E4E7EC;
+  --text:#0F1724;
+  --text2:#4B5565;
+  --text3:#8A93A3;
+  --green:#16A37F;
+  --green-dark:#0F8F6E;
+  --green-light:#E7F7F1;
+  --red:#D64545;
+  --amber:#B7791F;
+  --amber-light:#FDF3DE;
+  --blue:#2563AC;
+  --blue-light:#E7F0FB;
+  --shadow-sm:0 1px 2px rgba(15,23,36,.06);
+  --shadow-md:0 8px 40px rgba(15,23,36,.12);
+}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--green-dark)}
+button{font:inherit;cursor:pointer}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
+.hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.hdr-logo{width:32px;height:32px;background:var(--green);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
+.hdr-right a{font-size:13px;color:var(--text3);text-decoration:none}
+.hdr-right a:hover{color:var(--text2)}
+
+.wrap{max-width:640px;margin:0 auto;padding:56px 24px 80px}
+.wrap-wide{max-width:820px}
+.wrap h1{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+.wrap>p.lede{color:var(--text2);font-size:15px;margin-bottom:32px}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:28px}
+.field{margin-bottom:18px}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text2)}
+.field input,.field textarea{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.field input:focus,.field textarea:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
+.field textarea{resize:vertical;min-height:90px}
+
+.submit-btn{width:100%;padding:12px 16px;border:none;border-radius:9px;background:var(--green);color:#fff;font-weight:600;font-size:15px}
+.submit-btn:hover{background:var(--green-dark)}
+.submit-btn:disabled{opacity:.6;cursor:default}
+.err-msg{background:#FDEDEC;border:1px solid #F3C6C6;color:#9B2C2C;font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:16px}
+.info-msg{background:var(--green-light);border:1px solid #BFE6D8;color:var(--green-dark);font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:16px;line-height:1.5}
+
+.list-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.list-toolbar .not-you{font-size:13px;color:var(--text3);background:none;border:none;text-decoration:underline}
+.table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);padding:12px 16px;border-bottom:1px solid var(--border)}
+tbody tr{border-bottom:1px solid var(--border);cursor:pointer}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:var(--bg)}
+tbody td{padding:13px 16px;vertical-align:middle}
+.subject-cell{font-weight:600}
+.updated-cell{color:var(--text3);font-size:13px;white-space:nowrap}
+.empty-row td{text-align:center;color:var(--text3);padding:40px 16px}
+
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px}
+.badge-Open{background:var(--blue-light);color:var(--blue)}
+.badge-Pending{background:var(--amber-light);color:var(--amber)}
+.badge-Resolved{background:var(--green-light);color:var(--green-dark)}
+.badge-Closed{background:var(--bg);color:var(--text3);border:1px solid var(--border)}
+
+.back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:13px;font-weight:600;background:none;border:none;margin-bottom:16px}
+.detail-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:24px;margin-bottom:20px}
+.detail-id{color:var(--text3);font-size:12px;font-weight:600;margin-bottom:4px}
+.detail-card h1{font-size:19px;letter-spacing:-.3px;margin-bottom:10px}
+
+.thread{display:flex;flex-direction:column;gap:12px;margin-bottom:18px}
+.msg{border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.5;max-width:92%}
+.msg-you{background:var(--green-light);align-self:flex-end}
+.msg-staff{background:var(--bg);border:1px solid var(--border);align-self:flex-start}
+.msg-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:700;margin-bottom:4px}
+.msg-you .msg-head{color:var(--green-dark)}
+.msg-staff .msg-head{color:var(--text2)}
+.msg-time{font-weight:400;color:var(--text3)}
+.msg-body{white-space:pre-wrap;word-break:break-word}
+
+.reply-send-btn{padding:9px 18px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:14px}
+.reply-send-btn:hover{background:var(--green-dark)}
+.reply-send-btn:disabled{opacity:.6}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <a class="hdr-brand" href="/">
+    <div class="hdr-logo">
+      <svg width="17" height="17" fill="none" viewBox="0 0 24 24">
+        <path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/>
+      </svg>
+    </div>
+    <span class="hdr-name">Jet City IT Help Desk</span>
+  </a>
+  <div class="hdr-right"><a href="/">New request</a></div>
+</div>
+
+<div class="wrap" id="request-view">
+  <h1>Track your tickets</h1>
+  <p class="lede">Enter the email you used when submitting a request and we'll email you a link to view and reply to your tickets.</p>
+  <div class="card">
+    <div class="err-msg" id="request-err" style="display:none"></div>
+    <div class="info-msg" id="request-info" style="display:none"></div>
+    <form id="request-form">
+      <div class="field">
+        <label for="r-email">Your email</label>
+        <input type="email" id="r-email" required/>
+      </div>
+      <button type="submit" class="submit-btn" id="request-btn">Email me a tracking link</button>
+    </form>
+  </div>
+</div>
+
+<div class="wrap wrap-wide" id="list-view" style="display:none">
+  <div class="list-toolbar">
+    <div>
+      <h1 style="margin-bottom:2px">Your tickets</h1>
+      <p style="color:var(--text2);font-size:13px" id="list-email"></p>
+    </div>
+    <button class="not-you" id="not-you-btn">Not you? Use a different email</button>
+  </div>
+  <div class="table-card">
+    <table>
+      <thead><tr><th>Subject</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
+      <tbody id="tickets-tbody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="wrap wrap-wide" id="detail-view" style="display:none">
+  <button class="back-link" id="back-btn">← Back to your tickets</button>
+  <div class="detail-card">
+    <div class="detail-id" id="d-ticket-id"></div>
+    <h1 id="d-subject"></h1>
+    <span class="badge" id="d-status-badge"></span>
+  </div>
+  <div class="detail-card">
+    <div class="thread" id="thread"></div>
+    <div class="field">
+      <textarea id="reply-body" placeholder="Add a reply…"></textarea>
+    </div>
+    <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function relativeTime(iso){
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.round(hrs / 24);
+  return days + 'd ago';
+}
+
+const params = new URLSearchParams(location.search);
+let session = null; // { email, token }
+
+const fromQuery = params.get('email') && params.get('token')
+  ? { email: params.get('email'), token: params.get('token') }
+  : null;
+if (fromQuery) {
+  session = fromQuery;
+  localStorage.setItem('hd_client_session', JSON.stringify(session));
+  // Clean the token out of the visible URL/history without losing the page.
+  history.replaceState({}, '', location.pathname);
+} else {
+  try {
+    const stored = JSON.parse(localStorage.getItem('hd_client_session') || 'null');
+    if (stored && stored.email && stored.token) session = stored;
+  } catch (_) { /* ignore malformed storage */ }
+}
+
+async function clientFetch(path, opts){
+  opts = opts || {};
+  const url = new URL('/api/client' + path, location.origin);
+  if (opts.query) Object.keys(opts.query).forEach(function(k){ url.searchParams.set(k, opts.query[k]); });
+  const fetchOpts = { method: opts.method || 'GET' };
+  if (opts.body) {
+    fetchOpts.method = opts.method || 'POST';
+    fetchOpts.headers = { 'Content-Type': 'application/json' };
+    fetchOpts.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(url, fetchOpts);
+  const data = await res.json().catch(function(){ return {}; });
+  if (!res.ok) throw Object.assign(new Error(data.error || ('Request failed (' + res.status + ')')), { status: res.status });
+  return data;
+}
+
+function showView(id){
+  ['request-view', 'list-view', 'detail-view'].forEach(function(v){
+    document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
+  });
+}
+
+function forgetSession(message){
+  localStorage.removeItem('hd_client_session');
+  session = null;
+  showView('request-view');
+  const errEl = document.getElementById('request-err');
+  if (message) {
+    errEl.textContent = message;
+    errEl.style.display = 'block';
+  }
+}
+
+document.getElementById('not-you-btn').addEventListener('click', function(){ forgetSession(); });
+
+document.getElementById('request-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const btn = document.getElementById('request-btn');
+  const errEl = document.getElementById('request-err');
+  const infoEl = document.getElementById('request-info');
+  errEl.style.display = 'none';
+  infoEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    await clientFetch('/access', { method: 'POST', body: { email: document.getElementById('r-email').value } });
+    infoEl.textContent = "If that email has any tickets, we've sent a tracking link to it. Check your inbox.";
+    infoEl.style.display = 'block';
+  } catch (err) {
+    errEl.textContent = 'Something went wrong. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Email me a tracking link';
+  }
+});
+
+async function loadTicketList(){
+  showView('list-view');
+  document.getElementById('list-email').textContent = session.email;
+  const tbody = document.getElementById('tickets-tbody');
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="4">Loading…</td></tr>';
+  try {
+    const data = await clientFetch('/tickets', { query: { email: session.email, token: session.token } });
+    const tickets = data.tickets || [];
+    if (!tickets.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No tickets found for this email yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = tickets.map(function(t){
+      return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
+        '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
+        '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
+        '<td>' + t.priority + '</td>' +
+        '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
+      '</tr>';
+    }).join('');
+    Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
+      tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
+    });
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) {
+      forgetSession('Your tracking link has expired or is invalid. Request a new one below.');
+      return;
+    }
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+let currentTicketId = null;
+
+async function openTicket(id){
+  currentTicketId = id;
+  showView('detail-view');
+  document.getElementById('thread').innerHTML = 'Loading…';
+  try {
+    const t = await clientFetch('/tickets/' + encodeURIComponent(id), { query: { email: session.email, token: session.token } });
+    document.getElementById('d-ticket-id').textContent = t.ticketId;
+    document.getElementById('d-subject').textContent = t.subject;
+    const badge = document.getElementById('d-status-badge');
+    badge.textContent = t.status;
+    badge.className = 'badge badge-' + t.status;
+
+    const thread = document.getElementById('thread');
+    thread.innerHTML = (t.messages || []).map(function(m){
+      const cls = m.from === 'staff' ? 'msg-staff' : 'msg-you';
+      const who = m.from === 'staff' ? 'Jet City IT Help Desk' : 'You';
+      return '<div class="msg ' + cls + '">' +
+        '<div class="msg-head"><span>' + who + '</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
+        '<div class="msg-body">' + escapeHtml(m.body) + '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) {
+      forgetSession('Your tracking link has expired or is invalid. Request a new one below.');
+      return;
+    }
+    document.getElementById('thread').innerHTML = 'Failed to load ticket: ' + escapeHtml(e.message);
+  }
+}
+
+document.getElementById('back-btn').addEventListener('click', loadTicketList);
+
+document.getElementById('reply-send-btn').addEventListener('click', async function(){
+  const ta = document.getElementById('reply-body');
+  const text = ta.value.trim();
+  if (!text) return;
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await clientFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
+      method: 'POST',
+      body: { email: session.email, token: session.token, body: text },
+    });
+    ta.value = '';
+    await openTicket(currentTicketId);
+  } catch (e) {
+    alert('Failed to send reply: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Boot ──
+if (session) {
+  const deepLinkTicket = fromQuery ? params.get('ticket') : null;
+  if (deepLinkTicket) {
+    openTicket(deepLinkTicket);
+  } else {
+    loadTicketList();
+  }
+} else {
+  showView('request-view');
+}
+</script>
+</body>
+</html>

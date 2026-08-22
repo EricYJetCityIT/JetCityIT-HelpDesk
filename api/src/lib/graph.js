@@ -1,6 +1,11 @@
 const TENANT_ID = process.env.AAD_TENANT_ID;
 const CLIENT_ID = process.env.AAD_CLIENT_ID;
 
+// Shared mailbox all outbound help-desk email sends from (and, for
+// client-reply staff notifications, the address it sends TO as well --
+// staff already have it added as a shared mailbox in Outlook).
+const SUPPORT_MAILBOX = 'helpdesk@jetcityit.com';
+
 let cachedToken = null; // { accessToken, expiresAt }
 
 // App-only (client-credentials) Graph token. A staff reply has no delegated
@@ -57,4 +62,4 @@ async function sendMail({ from, to, subject, html }) {
   }
 }
 
-module.exports = { sendMail };
+module.exports = { sendMail, SUPPORT_MAILBOX };

@@ -36,6 +36,7 @@ function metaToJson(e) {
     assignee: e.assignee || '',
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
+    lastEmailError: e.lastEmailError || '',
   };
 }
 
@@ -198,8 +199,13 @@ app.http('ticketReply', {
 <p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
 <p>— Jet City IT Help Desk<br/>Ticket ${escapeHtml(ticketId)}</p>`;
           await sendMail({ from: NOTIFY_FROM, to: meta.email, subject: `Re: ${meta.subject} [${ticketId}]`, html });
+          await table.updateEntity({ partitionKey: ticketId, rowKey: '0', lastEmailError: '' }, 'Merge');
         } catch (e) {
           context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+          // TEMP diagnostic (remove once email delivery is confirmed working):
+          // surfaces the real Graph error through the API since Application
+          // Insights isn't wired up to read Function logs yet.
+          await table.updateEntity({ partitionKey: ticketId, rowKey: '0', lastEmailError: String(e.message).slice(0, 1000) }, 'Merge');
         }
       }
 

@@ -34,6 +34,21 @@ redirect URIs registered for this site's origins (`/` and `/staff.html`, for
 both the `*.azurestaticapps.net` default hostname and `helpdesk.jetcityit.com`).
 No new app registration, no new admin consent.
 
+## Email notifications
+
+A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a
+real shared mailbox with sign-in disabled — same setup pattern as the
+crew-calendar app's shared mailboxes). Sending uses **app-only Microsoft
+Graph** (`api/src/lib/graph.js`), reusing the same App Registration and its
+already-admin-consented application `Mail.Send` permission — no new consent
+grant, just a `MAIL_CLIENT_SECRET` app setting (the same secret value used by
+the crew-calendar app's availability-reminder job).
+
+The reply itself is saved before the email is attempted, and sending is
+best-effort: a failure is logged (`EMAIL_NOTIFY_FAILED` in the Function's
+logs) but never fails the reply request. There is no client-facing portal
+yet, so the email carries the full reply text, not just a link.
+
 ## Testing
 
 - **Public**: submit a ticket with no auth → 201 with a `ticketId`. Submit
@@ -43,3 +58,7 @@ No new app registration, no new admin consent.
   assignee, reply → all succeed.
 - **As a signed-in but non-staff `@jetcityit.com` account**: `/api/me` returns
   `{isStaff:false}`; any `/api/tickets*` call → 403.
+- **Email**: reply to a real ticket → requester gets an email from
+  `helpdesk@jetcityit.com` with the reply text. Reply still succeeds (200)
+  even if `MAIL_CLIENT_SECRET` is missing/wrong — check the Function's logs
+  for `EMAIL_NOTIFY_FAILED` in that case.

@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Help Desk</title>
+<title>Help Desk — Jet City IT</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -15,30 +15,158 @@
   --border:#E4E7EC;
   --text:#0F1724;
   --text2:#4B5565;
+  --text3:#8A93A3;
   --green:#16A37F;
+  --green-dark:#0F8F6E;
+  --red:#D64545;
   --shadow-sm:0 1px 2px rgba(15,23,36,.06);
+  --shadow-md:0 8px 40px rgba(15,23,36,.12);
 }
 body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;padding:0 24px;gap:12px;box-shadow:var(--shadow-sm)}
+a{color:var(--green-dark)}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
+.hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
 .hdr-logo{width:32px;height:32px;background:var(--green);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
-.wrap{max-width:520px;margin:0 auto;padding:80px 24px;text-align:center}
-.wrap h1{font-size:22px;font-weight:600;margin-bottom:10px}
-.wrap p{color:var(--text2);font-size:14px;line-height:1.6}
+.hdr-staff-link{font-size:13px;color:var(--text3);text-decoration:none}
+.hdr-staff-link:hover{color:var(--text2)}
+
+.wrap{max-width:640px;margin:0 auto;padding:56px 24px 80px}
+.wrap h1{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+.wrap>p.lede{color:var(--text2);font-size:15px;margin-bottom:32px}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:28px}
+.field{margin-bottom:18px}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text2)}
+.field .req{color:var(--red)}
+.field input,.field textarea{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.field input:focus,.field textarea:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
+.field textarea{resize:vertical;min-height:120px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:560px){.row2{grid-template-columns:1fr}}
+
+/* Honeypot: present in the DOM (so simple bots that only check for
+   display:none/visibility:hidden still fill it in) but invisible and
+   unreachable by a real user — off-screen, zero size, not tab-focusable. */
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+
+.submit-btn{width:100%;padding:12px 16px;border:none;border-radius:9px;background:var(--green);color:#fff;font:inherit;font-weight:600;font-size:15px;cursor:pointer;margin-top:6px}
+.submit-btn:hover{background:var(--green-dark)}
+.submit-btn:disabled{opacity:.6;cursor:default}
+.err-msg{background:#FDEDEC;border:1px solid #F3C6C6;color:#9B2C2C;font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:16px;display:none}
+
+.confirm{text-align:center;padding:20px 8px}
+.confirm .icon{width:56px;height:56px;border-radius:50%;background:#E7F7F1;color:var(--green-dark);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:28px}
+.confirm h2{font-size:19px;margin-bottom:8px}
+.confirm p{color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:14px}
+.confirm .ticket-id{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-weight:700;font-size:16px;letter-spacing:.5px;margin-bottom:6px}
 </style>
 </head>
 <body>
 <div class="hdr">
-  <div class="hdr-logo">
-    <svg width="17" height="17" fill="none" viewBox="0 0 24 24">
-      <path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/>
-    </svg>
-  </div>
-  <span class="hdr-name">Jet City IT Help Desk</span>
+  <a class="hdr-brand" href="/">
+    <div class="hdr-logo">
+      <svg width="17" height="17" fill="none" viewBox="0 0 24 24">
+        <path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/>
+      </svg>
+    </div>
+    <span class="hdr-name">Jet City IT Help Desk</span>
+  </a>
+  <a class="hdr-staff-link" href="/staff.html">Staff sign in</a>
 </div>
+
 <div class="wrap">
-  <h1>Help Desk</h1>
-  <p>This site is under construction. Check back soon.</p>
+  <div id="form-view">
+    <h1>Submit a support request</h1>
+    <p class="lede">Tell us what's going on and a technician will follow up.</p>
+    <div class="card">
+      <div class="err-msg" id="err-msg"></div>
+      <form id="ticket-form" autocomplete="off">
+        <div class="row2">
+          <div class="field">
+            <label for="f-name">Your name <span class="req">*</span></label>
+            <input type="text" id="f-name" name="name" maxlength="120" required/>
+          </div>
+          <div class="field">
+            <label for="f-email">Your email <span class="req">*</span></label>
+            <input type="email" id="f-email" name="email" maxlength="200" required/>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-company">Company</label>
+          <input type="text" id="f-company" name="company" maxlength="150"/>
+        </div>
+        <div class="field">
+          <label for="f-subject">Subject <span class="req">*</span></label>
+          <input type="text" id="f-subject" name="subject" maxlength="200" required/>
+        </div>
+        <div class="field">
+          <label for="f-description">Describe the issue <span class="req">*</span></label>
+          <textarea id="f-description" name="description" maxlength="5000" required></textarea>
+        </div>
+        <div class="field hp" aria-hidden="true">
+          <label for="f-website">Website</label>
+          <input type="text" id="f-website" name="website" tabindex="-1" autocomplete="off"/>
+        </div>
+        <button type="submit" class="submit-btn" id="submit-btn">Submit request</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="confirm-view" style="display:none">
+    <div class="card confirm">
+      <div class="icon">✓</div>
+      <h2>Request submitted</h2>
+      <p>Your ticket number is below. A technician will be in touch at the email you provided.</p>
+      <div class="ticket-id" id="confirm-ticket-id"></div>
+    </div>
+  </div>
 </div>
+
+<script>
+const form = document.getElementById('ticket-form');
+const submitBtn = document.getElementById('submit-btn');
+const errEl = document.getElementById('err-msg');
+
+form.addEventListener('submit', async function(e){
+  e.preventDefault();
+  errEl.style.display = 'none';
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Submitting…';
+
+  const payload = {
+    name: document.getElementById('f-name').value,
+    email: document.getElementById('f-email').value,
+    company: document.getElementById('f-company').value,
+    subject: document.getElementById('f-subject').value,
+    description: document.getElementById('f-description').value,
+    website: document.getElementById('f-website').value, // honeypot
+  };
+
+  try {
+    const res = await fetch('/api/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(function(){ return {}; });
+    if (!res.ok) {
+      errEl.textContent = data.error || 'Something went wrong. Please try again.';
+      errEl.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit request';
+      return;
+    }
+    document.getElementById('confirm-ticket-id').textContent = data.ticketId;
+    document.getElementById('form-view').style.display = 'none';
+    document.getElementById('confirm-view').style.display = 'block';
+  } catch (err) {
+    errEl.textContent = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit request';
+  }
+});
+</script>
 </body>
 </html>

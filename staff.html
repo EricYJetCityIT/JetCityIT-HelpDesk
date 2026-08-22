@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Staff Console — Jet City IT Help Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F8FA;
+  --surface:#FFFFFF;
+  --border:#E4E7EC;
+  --text:#0F1724;
+  --text2:#4B5565;
+  --text3:#8A93A3;
+  --green:#16A37F;
+  --green-dark:#0F8F6E;
+  --green-light:#E7F7F1;
+  --red:#D64545;
+  --amber:#B7791F;
+  --amber-light:#FDF3DE;
+  --blue:#2563AC;
+  --blue-light:#E7F0FB;
+  --shadow-sm:0 1px 2px rgba(15,23,36,.06);
+  --shadow-md:0 8px 40px rgba(15,23,36,.14);
+}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+button{font:inherit;cursor:pointer}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
+.hdr-left{display:flex;align-items:center;gap:16px}
+.hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.hdr-logo{width:32px;height:32px;background:var(--green);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
+.hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px}
+.hdr-right{display:flex;align-items:center;gap:12px}
+.user-badge{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px}
+
+/* ── Sign-in overlay ── */
+#ms-login-overlay{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-md);padding:36px 32px;max-width:380px;width:100%;text-align:center}
+.login-card .hdr-logo{margin:0 auto 16px}
+.login-card h1{font-size:18px;margin-bottom:8px}
+.login-card p{color:var(--text2);font-size:13px;margin-bottom:22px;line-height:1.5}
+.ms-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:11px 16px;border:1px solid var(--border);border-radius:9px;background:var(--surface);font-weight:600;font-size:14px}
+.ms-btn:hover{background:var(--bg)}
+.ms-btn:disabled{opacity:.6}
+.login-err{color:var(--red);font-size:13px;margin-top:12px;display:none}
+
+/* ── Access denied ── */
+#denied-view{display:none;max-width:440px;margin:80px auto;text-align:center;padding:0 24px}
+#denied-view h1{font-size:20px;margin-bottom:10px}
+#denied-view p{color:var(--text2);font-size:14px;line-height:1.6}
+
+/* ── Console ── */
+#console-view{display:none;max-width:1100px;margin:0 auto;padding:28px 24px 60px}
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px}
+.filters{display:flex;gap:6px}
+.filter-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:13px;font-weight:600;color:var(--text2)}
+.filter-btn.active{background:var(--text);color:#fff;border-color:var(--text)}
+.refresh-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:13px;font-weight:600;color:var(--text2)}
+
+.table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);padding:12px 16px;border-bottom:1px solid var(--border)}
+tbody tr{border-bottom:1px solid var(--border);cursor:pointer}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:var(--bg)}
+tbody td{padding:13px 16px;vertical-align:middle}
+.subject-cell{font-weight:600}
+.req-cell{color:var(--text2);font-size:13px}
+.updated-cell{color:var(--text3);font-size:13px;white-space:nowrap}
+.empty-row td{text-align:center;color:var(--text3);padding:40px 16px}
+
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px}
+.badge-Open{background:var(--blue-light);color:var(--blue)}
+.badge-Pending{background:var(--amber-light);color:var(--amber)}
+.badge-Resolved{background:var(--green-light);color:var(--green-dark)}
+.badge-Closed{background:var(--bg);color:var(--text3);border:1px solid var(--border)}
+.pri-High{color:var(--red);font-weight:700}
+.pri-Normal{color:var(--text2)}
+.pri-Low{color:var(--text3)}
+
+/* ── Detail view ── */
+#detail-view{display:none;max-width:820px;margin:0 auto;padding:28px 24px 60px}
+.back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:13px;font-weight:600;background:none;border:none;margin-bottom:16px}
+.detail-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:24px;margin-bottom:20px}
+.detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px;flex-wrap:wrap}
+.detail-head h1{font-size:19px;letter-spacing:-.3px}
+.detail-id{color:var(--text3);font-size:12px;font-weight:600;margin-bottom:4px}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px;font-size:13px}
+@media(max-width:640px){.meta-grid{grid-template-columns:1fr 1fr}}
+.meta-grid label{display:block;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+.meta-grid div.val{color:var(--text)}
+.controls-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.ctrl{display:flex;flex-direction:column;gap:4px}
+.ctrl label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px}
+.ctrl select,.ctrl input{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg)}
+.assign-me-btn{padding:7px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface);font-size:13px;font-weight:600;color:var(--text2)}
+.save-meta-btn{padding:7px 14px;border:none;border-radius:7px;background:var(--text);color:#fff;font-size:13px;font-weight:600}
+.save-meta-btn:disabled{opacity:.5}
+
+.thread{display:flex;flex-direction:column;gap:12px;margin-bottom:18px}
+.msg{border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.5;max-width:92%}
+.msg-client{background:var(--bg);border:1px solid var(--border);align-self:flex-start}
+.msg-staff{background:var(--green-light);align-self:flex-end}
+.msg-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:700;margin-bottom:4px}
+.msg-client .msg-head{color:var(--text2)}
+.msg-staff .msg-head{color:var(--green-dark)}
+.msg-time{font-weight:400;color:var(--text3)}
+.msg-body{white-space:pre-wrap;word-break:break-word}
+
+.reply-box textarea{width:100%;min-height:90px;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg);resize:vertical;margin-bottom:10px}
+.reply-send-btn{padding:9px 18px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:14px}
+.reply-send-btn:hover{background:var(--green-dark)}
+.reply-send-btn:disabled{opacity:.6}
+</style>
+</head>
+<body>
+
+<div id="ms-login-overlay">
+  <div class="login-card">
+    <div class="hdr-logo">
+      <svg width="17" height="17" fill="none" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/></svg>
+    </div>
+    <h1>Help Desk Staff Console</h1>
+    <p>Sign in with your JetCityIT Microsoft account.<br/>Only @jetcityit.com accounts are permitted.</p>
+    <button class="ms-btn" id="ms-login-btn" onclick="msSignIn()">
+      <svg width="18" height="18" viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
+      Sign in with Microsoft
+    </button>
+    <div class="login-err" id="ms-login-err"></div>
+  </div>
+</div>
+
+<div id="denied-view">
+  <h1>You don't have access to the Help Desk console</h1>
+  <p>Your account isn't on the staff list. Ask an existing admin to add your email to <code>STAFF_UPNS</code>.</p>
+</div>
+
+<div id="app-shell" style="display:none">
+  <div class="hdr">
+    <div class="hdr-left">
+      <a class="hdr-brand" href="/">
+        <div class="hdr-logo">
+          <svg width="17" height="17" fill="none" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/></svg>
+        </div>
+        <span class="hdr-name">Jet City IT Help Desk</span>
+      </a>
+      <span class="hdr-console-tag">Staff Console</span>
+    </div>
+    <div class="hdr-right">
+      <span class="user-badge" id="user-badge"></span>
+    </div>
+  </div>
+
+  <div id="console-view">
+    <div class="toolbar">
+      <div class="filters" id="filters">
+        <button class="filter-btn active" data-status="">All</button>
+        <button class="filter-btn" data-status="Open">Open</button>
+        <button class="filter-btn" data-status="Pending">Pending</button>
+        <button class="filter-btn" data-status="Resolved">Resolved</button>
+        <button class="filter-btn" data-status="Closed">Closed</button>
+      </div>
+      <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+    </div>
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr><th>Subject</th><th>Requester</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
+        </thead>
+        <tbody id="tickets-tbody">
+          <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="detail-view">
+    <button class="back-link" id="back-btn">← Back to all tickets</button>
+    <div class="detail-card">
+      <div class="detail-head">
+        <div>
+          <div class="detail-id" id="d-ticket-id"></div>
+          <h1 id="d-subject"></h1>
+        </div>
+      </div>
+      <div class="meta-grid">
+        <div><label>Requester</label><div class="val" id="d-name"></div></div>
+        <div><label>Email</label><div class="val" id="d-email"></div></div>
+        <div><label>Company</label><div class="val" id="d-company"></div></div>
+      </div>
+      <div class="controls-row">
+        <div class="ctrl">
+          <label>Status</label>
+          <select id="d-status">
+            <option>Open</option><option>Pending</option><option>Resolved</option><option>Closed</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label>Priority</label>
+          <select id="d-priority">
+            <option>Low</option><option>Normal</option><option>High</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label>Assignee</label>
+          <input type="text" id="d-assignee" placeholder="unassigned"/>
+        </div>
+        <button class="assign-me-btn" id="assign-me-btn">Assign to me</button>
+        <button class="save-meta-btn" id="save-meta-btn">Save changes</button>
+      </div>
+    </div>
+
+    <div class="detail-card">
+      <div class="thread" id="thread"></div>
+      <div class="reply-box">
+        <textarea id="reply-body" placeholder="Write a reply…"></textarea>
+        <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/msal-browser-2.38.3.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
+<script>
+// ── Microsoft Login (MSAL) — reuses the crew-calendar app's Entra registration ──
+const msalConfig = {
+  auth: {
+    clientId: 'b367d366-39f5-4fdc-a5e9-9d634ca37b5e',
+    authority: 'https://login.microsoftonline.com/a2b534e7-8d8b-4c5f-ae4b-5076fd677ff4',
+    redirectUri: window.location.origin + window.location.pathname,
+  },
+  cache: { cacheLocation: 'sessionStorage' }
+};
+var msalInstance = new msal.PublicClientApplication(msalConfig);
+var msalAccount = null;
+const API_SCOPES = ['api://b367d366-39f5-4fdc-a5e9-9d634ca37b5e/access_as_user'];
+
+msalInstance.initialize()
+  .then(function(){ return msalInstance.handleRedirectPromise(); })
+  .then(function(response){
+    if (response && response.account) {
+      msalAccount = response.account;
+    } else {
+      var accounts = msalInstance.getAllAccounts();
+      if (accounts.length > 0) msalAccount = accounts[0];
+    }
+    if (msalAccount) afterSignIn();
+  }).catch(function(e){ console.error('MSAL init error:', e); });
+
+async function msSignIn(){
+  const btn = document.getElementById('ms-login-btn');
+  const errEl = document.getElementById('ms-login-err');
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  errEl.style.display = 'none';
+  try {
+    await msalInstance.loginRedirect({ scopes: API_SCOPES });
+  } catch(e) {
+    errEl.textContent = e.message || 'Sign-in failed. Please try again.';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Sign in with Microsoft';
+  }
+}
+
+async function getApiToken(){
+  if (!msalAccount) throw new Error('Not signed in');
+  try {
+    const r = await msalInstance.acquireTokenSilent({ scopes: API_SCOPES, account: msalAccount });
+    return r.accessToken;
+  } catch(e) {
+    const r = await msalInstance.acquireTokenPopup({ scopes: API_SCOPES, account: msalAccount });
+    return r.accessToken;
+  }
+}
+
+async function apiFetch(path, opts){
+  opts = opts || {};
+  const token = await getApiToken();
+  const headers = Object.assign({ 'X-Jetcity-Authorization': 'Bearer ' + token }, opts.headers || {});
+  if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  const res = await fetch('/api' + path, Object.assign({}, opts, { headers }));
+  const data = await res.json().catch(function(){ return {}; });
+  if (!res.ok) throw Object.assign(new Error(data.error || ('Request failed (' + res.status + ')')), { status: res.status });
+  return data;
+}
+
+async function afterSignIn(){
+  document.getElementById('ms-login-overlay').style.display = 'none';
+  try {
+    const me = await apiFetch('/me');
+    if (!me.isStaff) {
+      document.getElementById('denied-view').style.display = 'block';
+      return;
+    }
+    document.getElementById('app-shell').style.display = 'block';
+    const badge = document.getElementById('user-badge');
+    badge.textContent = me.name || me.upn;
+    showConsole();
+    loadTickets();
+  } catch (e) {
+    console.error('Failed to load /me:', e);
+    document.getElementById('denied-view').style.display = 'block';
+  }
+}
+
+// ── View switching ──
+function showConsole(){
+  document.getElementById('console-view').style.display = 'block';
+  document.getElementById('detail-view').style.display = 'none';
+}
+function showDetail(){
+  document.getElementById('console-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = 'block';
+}
+document.getElementById('back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
+
+// ── Ticket list ──
+let currentStatusFilter = '';
+document.getElementById('filters').addEventListener('click', function(e){
+  const btn = e.target.closest('.filter-btn');
+  if (!btn) return;
+  document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  currentStatusFilter = btn.dataset.status;
+  loadTickets();
+});
+document.getElementById('refresh-btn').addEventListener('click', loadTickets);
+
+function relativeTime(iso){
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.round(hrs / 24);
+  return days + 'd ago';
+}
+
+async function loadTickets(){
+  const tbody = document.getElementById('tickets-tbody');
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    const qs = currentStatusFilter ? ('?status=' + encodeURIComponent(currentStatusFilter)) : '';
+    const data = await apiFetch('/tickets' + qs);
+    const tickets = data.tickets || [];
+    if (!tickets.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No tickets here.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = tickets.map(function(t){
+      return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
+        '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
+        '<td class="req-cell">' + escapeHtml(t.name) + '</td>' +
+        '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
+        '<td class="pri-' + t.priority + '">' + t.priority + '</td>' +
+        '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
+      '</tr>';
+    }).join('');
+    Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
+      tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
+    });
+  } catch (e) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+// ── Ticket detail ──
+let currentTicketId = null;
+
+async function openTicket(id){
+  currentTicketId = id;
+  showDetail();
+  document.getElementById('thread').innerHTML = 'Loading…';
+  try {
+    const t = await apiFetch('/tickets/' + encodeURIComponent(id));
+    document.getElementById('d-ticket-id').textContent = t.ticketId;
+    document.getElementById('d-subject').textContent = t.subject;
+    document.getElementById('d-name').textContent = t.name;
+    document.getElementById('d-email').textContent = t.email;
+    document.getElementById('d-company').textContent = t.company || '—';
+    document.getElementById('d-status').value = t.status;
+    document.getElementById('d-priority').value = t.priority;
+    document.getElementById('d-assignee').value = t.assignee || '';
+
+    const thread = document.getElementById('thread');
+    thread.innerHTML = (t.messages || []).map(function(m){
+      const cls = m.authorType === 'staff' ? 'msg-staff' : 'msg-client';
+      const who = m.authorType === 'staff' ? (m.authorName + ' (staff)') : m.authorName;
+      return '<div class="msg ' + cls + '">' +
+        '<div class="msg-head"><span>' + escapeHtml(who) + '</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
+        '<div class="msg-body">' + escapeHtml(m.body) + '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    document.getElementById('thread').innerHTML = 'Failed to load ticket: ' + escapeHtml(e.message);
+  }
+}
+
+document.getElementById('assign-me-btn').addEventListener('click', function(){
+  const badge = document.getElementById('user-badge').textContent;
+  document.getElementById('d-assignee').value = badge;
+});
+
+document.getElementById('save-meta-btn').addEventListener('click', async function(){
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: document.getElementById('d-status').value,
+        priority: document.getElementById('d-priority').value,
+        assignee: document.getElementById('d-assignee').value,
+      }),
+    });
+  } catch (e) {
+    alert('Failed to save: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('reply-send-btn').addEventListener('click', async function(){
+  const ta = document.getElementById('reply-body');
+  const text = ta.value.trim();
+  if (!text) return;
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
+      method: 'POST',
+      body: JSON.stringify({ body: text }),
+    });
+    ta.value = '';
+    await openTicket(currentTicketId);
+  } catch (e) {
+    alert('Failed to send reply: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

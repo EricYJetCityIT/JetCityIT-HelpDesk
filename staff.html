@@ -293,12 +293,24 @@ async function getApiToken(){
   }
 }
 
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
 async function apiFetch(path, opts){
   opts = opts || {};
   const token = await getApiToken();
   const headers = Object.assign({ 'X-Jetcity-Authorization': 'Bearer ' + token }, opts.headers || {});
   if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-  const res = await fetch('/api' + path, Object.assign({}, opts, { headers }));
+  const fetchOpts = Object.assign({}, opts, { headers });
+  // Read-only requests are safe to retry automatically; a POST/PATCH isn't
+  // -- if the backend actually processed it and only the response got lost
+  // (Azure Static Web Apps' occasional cold-start "Backend call failure"),
+  // a silent retry could double up a reply or a status change.
+  const canRetry = !opts.method || opts.method === 'GET';
+  let res = await fetch('/api' + path, fetchOpts);
+  if (!res.ok && res.status >= 500 && canRetry) {
+    await sleep(800);
+    res = await fetch('/api' + path, fetchOpts);
+  }
   const data = await res.json().catch(function(){ return {}; });
   if (!res.ok) throw Object.assign(new Error(data.error || ('Request failed (' + res.status + ')')), { status: res.status });
   return data;
@@ -309,7 +321,12 @@ async function apiFetch(path, opts){
 // the auth header attached, then hand the caller a blob: object URL.
 async function apiFetchBlob(path){
   const token = await getApiToken();
-  const res = await fetch('/api' + path, { headers: { 'X-Jetcity-Authorization': 'Bearer ' + token } });
+  const headers = { 'X-Jetcity-Authorization': 'Bearer ' + token };
+  let res = await fetch('/api' + path, { headers: headers });
+  if (!res.ok && res.status >= 500) {
+    await sleep(800);
+    res = await fetch('/api' + path, { headers: headers });
+  }
   if (!res.ok) throw new Error('Request failed (' + res.status + ')');
   return res.blob();
 }

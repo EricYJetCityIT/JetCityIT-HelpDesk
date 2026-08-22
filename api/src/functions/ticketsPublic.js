@@ -122,8 +122,7 @@ app.http('ticketsCreate', {
       return { status: 201, jsonBody: { ticketId } };
     } catch (e) {
       context.error(e);
-      // TEMP diagnostic, see auth.js's authErrorResponse for why.
-      return { status: 500, jsonBody: { error: 'Internal server error', debug: String((e && e.message) || e) } };
+      return { status: 500, jsonBody: { error: 'Internal server error' } };
     }
   },
 });

@@ -123,10 +123,7 @@ function authErrorResponse(e, context) {
     return { status: e.status, jsonBody: { error: e.message } };
   }
   context.error(e);
-  // TEMP diagnostic (remove once the intermittent 500 is root-caused):
-  // Application Insights isn't wired up, so this is the only way to see
-  // the real error behind a 500 without portal/CLI log access.
-  return { status: 500, jsonBody: { error: 'Internal server error', debug: String((e && e.message) || e) } };
+  return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
 module.exports = { requireStaff, AuthError, authErrorResponse, STAFF_UPNS };

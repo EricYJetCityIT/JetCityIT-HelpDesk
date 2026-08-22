@@ -202,6 +202,8 @@ if (fromQuery) {
   } catch (_) { /* ignore malformed storage */ }
 }
 
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
 async function clientFetch(path, opts){
   opts = opts || {};
   const url = new URL('/api/client' + path, location.origin);
@@ -212,7 +214,16 @@ async function clientFetch(path, opts){
     fetchOpts.headers = { 'Content-Type': 'application/json' };
     fetchOpts.body = JSON.stringify(opts.body);
   }
-  const res = await fetch(url, fetchOpts);
+  // Read-only requests are safe to retry automatically; a POST (reply,
+  // access request) isn't -- if the backend actually processed it and only
+  // the response got lost (Azure Static Web Apps' occasional cold-start
+  // "Backend call failure"), a silent retry could create a duplicate.
+  const canRetry = fetchOpts.method === 'GET';
+  let res = await fetch(url, fetchOpts);
+  if (!res.ok && res.status >= 500 && canRetry) {
+    await sleep(800);
+    res = await fetch(url, fetchOpts);
+  }
   const data = await res.json().catch(function(){ return {}; });
   if (!res.ok) throw Object.assign(new Error(data.error || ('Request failed (' + res.status + ')')), { status: res.status });
   return data;

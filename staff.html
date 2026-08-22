@@ -32,7 +32,8 @@ button{font:inherit;cursor:pointer}
 .hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
 .hdr-left{display:flex;align-items:center;gap:16px}
 .hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
-.hdr-logo{width:32px;height:32px;background:var(--green);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-logo img{width:100%;height:100%;object-fit:contain}
 .hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
 .hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px}
 .hdr-right{display:flex;align-items:center;gap:12px}
@@ -133,7 +134,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
 <div id="ms-login-overlay">
   <div class="login-card">
     <div class="hdr-logo">
-      <svg width="17" height="17" fill="none" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/></svg>
+      <img src="/logo.png" alt="Jet City IT logo"/>
     </div>
     <h1>Help Desk Staff Console</h1>
     <p>Sign in with your JetCityIT Microsoft account.<br/>Only @jetcityit.com accounts are permitted.</p>
@@ -155,7 +156,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="hdr-left">
       <a class="hdr-brand" href="/">
         <div class="hdr-logo">
-          <svg width="17" height="17" fill="none" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Zm3 7H9V7a3 3 0 0 1 6 0Z" fill="white"/></svg>
+          <img src="/logo.png" alt="Jet City IT logo"/>
         </div>
         <span class="hdr-name">Jet City IT Help Desk</span>
       </a>

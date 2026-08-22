@@ -4,7 +4,7 @@
     "FUNCTIONS_WORKER_RUNTIME": "node",
     "AAD_CLIENT_ID": "<same App Registration as the crew-calendar app: b367d366-39f5-4fdc-a5e9-9d634ca37b5e>",
     "AAD_TENANT_ID": "<same tenant: a2b534e7-8d8b-4c5f-ae4b-5076fd677ff4>",
-    "STAFF_UPNS": "<comma-separated emails allowed into the staff console, e.g. dylanm@jetcityit.com,ericy@jetcityit.com,alex@jetcityit.com>",
+    "STAFF_UPNS": "<comma-separated emails allowed into the staff console, e.g. dylanm@jetcityit.com,ericy@jetcityit.com,alex@jetcityit.com,simone@jetcityit.com>",
     "AZURE_STORAGE_CONNECTION_STRING": "<connection string for the Table Storage account holding tickets>"
   }
 }

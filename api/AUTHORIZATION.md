@@ -19,7 +19,7 @@ comma-separated allowlist app setting, checked against the signed-in user's
 UPN (email). No app-registration change needed to add or remove someone.
 
 ```
-STAFF_UPNS = dylanm@jetcityit.com,ericy@jetcityit.com,alex@jetcityit.com
+STAFF_UPNS = dylanm@jetcityit.com,ericy@jetcityit.com,alex@jetcityit.com,simone@jetcityit.com
 ```
 
 To add or remove staff: Static Web App (`jetcityit-helpdesk`) → **Configuration**

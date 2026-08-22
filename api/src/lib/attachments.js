@@ -4,14 +4,16 @@ const { BlobServiceClient } = require('@azure/storage-blob');
 const CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const CONTAINER_NAME = 'attachments';
 
-const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4 MB per image
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per image
 const MAX_FILES_PER_MESSAGE = 4;
-const MAX_TOTAL_BYTES_PER_MESSAGE = 12 * 1024 * 1024; // guard against many files each near the per-file cap
-// Headroom over MAX_TOTAL_BYTES_PER_MESSAGE for base64 inflation (~4/3x)
-// plus the rest of the JSON payload (name/subject/description/etc) --
-// checked against Content-Length BEFORE the body is read/parsed, so an
-// oversized request is rejected without ever buffering it into memory.
-const MAX_REQUEST_BODY_BYTES = 18 * 1024 * 1024;
+const MAX_TOTAL_BYTES_PER_MESSAGE = 20 * 1024 * 1024; // guard against many files each near the per-file cap
+// Headroom over MAX_TOTAL_BYTES_PER_MESSAGE for base64 inflation (~4/3x --
+// 20MB decoded is ~26.7MB of base64) plus the rest of the JSON payload
+// (name/subject/description/etc) -- checked against Content-Length BEFORE
+// the body is read/parsed, so an oversized request is rejected without
+// ever buffering it into memory. Azure Static Web Apps caps the whole
+// request around 30MB regardless, so this stays comfortably under that.
+const MAX_REQUEST_BODY_BYTES = 28 * 1024 * 1024;
 
 // image/svg+xml is deliberately not in this list -- an SVG can carry
 // embedded <script>, making it an XSS vector if ever rendered or linked
@@ -101,12 +103,12 @@ async function storeAttachment(ticketId, raw) {
   // Cheap pre-check before the decode: base64 runs ~4/3 the size of the
   // decoded bytes, so this rejects grossly oversized payloads up front.
   if (base64.length > MAX_FILE_BYTES * 1.4) {
-    throw new AttachmentError('Each image must be 4 MB or smaller.');
+    throw new AttachmentError('Each image must be 10 MB or smaller.');
   }
 
   const buf = Buffer.from(base64, 'base64');
   if (!buf.length) throw new AttachmentError('An attachment was empty.');
-  if (buf.length > MAX_FILE_BYTES) throw new AttachmentError('Each image must be 4 MB or smaller.');
+  if (buf.length > MAX_FILE_BYTES) throw new AttachmentError('Each image must be 10 MB or smaller.');
 
   const sniffed = sniffImageType(buf);
   if (!sniffed) throw new AttachmentError('Only PNG, JPEG, GIF, or WEBP images are allowed.');
@@ -157,7 +159,7 @@ async function storeAttachments(ticketId, rawList) {
   }
   const approxTotalBytes = rawList.reduce((sum, r) => sum + String((r && r.dataBase64) || '').length * 0.75, 0);
   if (approxTotalBytes > MAX_TOTAL_BYTES_PER_MESSAGE) {
-    throw new AttachmentError('Attachments are too large combined (max 12 MB total).');
+    throw new AttachmentError('Attachments are too large combined (max 20 MB total).');
   }
 
   const stored = [];

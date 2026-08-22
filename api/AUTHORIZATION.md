@@ -70,8 +70,8 @@ individual technician.
 
 ## Image attachments
 
-Clients and staff can both attach up to 4 images (PNG/JPEG/GIF/WEBP, 4 MB
-each, 12 MB combined) to a ticket-creation, staff-reply, or client-reply
+Clients and staff can both attach up to 4 images (PNG/JPEG/GIF/WEBP, 10 MB
+each, 20 MB combined) to a ticket-creation, staff-reply, or client-reply
 request — sent as base64 in the same JSON body (`attachments: [{fileName,
 dataBase64}]`), not a separate upload call. Storage/validation lives in
 `api/src/lib/attachments.js`.

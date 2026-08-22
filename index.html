@@ -117,7 +117,7 @@ a{color:var(--green-dark)}
         <div class="field">
           <label for="f-attachments">Attach screenshots (optional)</label>
           <input type="file" id="f-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-          <div class="file-hint">Up to 4 images, 4 MB each.</div>
+          <div class="file-hint">Up to 4 images, 10 MB each.</div>
           <div class="file-list" id="file-list"></div>
         </div>
         <div class="field hp" aria-hidden="true">
@@ -148,7 +148,7 @@ function escapeHtml(s){
 }
 
 const MAX_FILES = 4;
-const MAX_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 let selectedFiles = [];
 
 function renderFileList(){
@@ -171,7 +171,7 @@ document.getElementById('f-attachments').addEventListener('change', function(e){
       break;
     }
     if (f.size > MAX_FILE_BYTES) {
-      errEl.textContent = f.name + ' is larger than 4 MB and was skipped.';
+      errEl.textContent = f.name + ' is larger than 10 MB and was skipped.';
       errEl.style.display = 'block';
       continue;
     }

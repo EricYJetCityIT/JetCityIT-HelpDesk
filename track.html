@@ -162,7 +162,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <textarea id="reply-body" placeholder="Add a reply…"></textarea>
     </div>
     <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-    <div class="file-hint">Up to 4 images, 4 MB each.</div>
+    <div class="file-hint">Up to 4 images, 10 MB each.</div>
     <div class="file-list" id="reply-file-list"></div>
     <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
   </div>
@@ -342,7 +342,7 @@ document.getElementById('back-btn').addEventListener('click', loadTicketList);
 
 // ── Reply attachments ──
 const MAX_REPLY_FILES = 4;
-const MAX_REPLY_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_REPLY_FILE_BYTES = 10 * 1024 * 1024;
 let replySelectedFiles = [];
 
 function renderReplyFileList(){
@@ -359,7 +359,7 @@ document.getElementById('reply-attachments').addEventListener('change', function
   const picked = Array.prototype.slice.call(e.target.files);
   for (const f of picked) {
     if (replySelectedFiles.length >= MAX_REPLY_FILES) break;
-    if (f.size > MAX_REPLY_FILE_BYTES) { alert(f.name + ' is larger than 4 MB and was skipped.'); continue; }
+    if (f.size > MAX_REPLY_FILE_BYTES) { alert(f.name + ' is larger than 10 MB and was skipped.'); continue; }
     replySelectedFiles.push(f);
   }
   e.target.value = '';

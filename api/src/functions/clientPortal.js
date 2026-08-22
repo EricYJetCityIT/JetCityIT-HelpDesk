@@ -91,7 +91,8 @@ reply to these tickets, so don't forward it.</p>
       return { jsonBody: { ok: true } };
     } catch (e) {
       context.error(e);
-      return { status: 500, jsonBody: { error: 'Internal server error' } };
+      // TEMP diagnostic, see auth.js's authErrorResponse for why.
+      return { status: 500, jsonBody: { error: 'Internal server error', debug: String((e && e.message) || e) } };
     }
   },
 });

@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<script>
+// Runs before the stylesheet/body paint so a saved dark-mode choice never
+// flashes light-then-dark on load. No stored value = follow the OS/browser
+// preference (handled purely in CSS via prefers-color-scheme).
+(function(){
+  try {
+    var t = localStorage.getItem('hd_theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
 <title>Help Desk — Jet City IT</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -18,9 +29,62 @@
   --text3:#8A93A3;
   --green:#16A37F;
   --green-dark:#0F8F6E;
+  --green-light:#E7F7F1;
   --red:#D64545;
+  --err-bg:#FDEDEC;
+  --err-border:#F3C6C6;
+  --err-text:#9B2C2C;
+  /* Deliberately NOT redefined in the dark blocks below -- this is a fixed
+     "dark chip, white text" accent for small controls, not the page's
+     adaptive foreground color (which inverts to near-white in dark mode
+     and would make the white text on it disappear). */
+  --ink:#0F1724;
+  /* Sampled from logo.png's navy -- brightened for dark mode below so the
+     button stays visible against a dark card instead of blending into it. */
+  --brand:#052A3F;
+  --brand-hover:#123A50;
   --shadow-sm:0 1px 2px rgba(15,23,36,.06);
   --shadow-md:0 8px 40px rgba(15,23,36,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B1119;
+    --surface:#141C27;
+    --border:#26313F;
+    --text:#F2F5F7;
+    --text2:#B6C0CC;
+    --text3:#7C8896;
+    --green:#34C795;
+    --green-dark:#16A37F;
+    --green-light:rgba(52,199,149,.14);
+    --red:#F27272;
+    --err-bg:rgba(242,114,114,.12);
+    --err-border:rgba(242,114,114,.35);
+    --err-text:#F5A3A3;
+    --brand:#3CA2DD;
+    --brand-hover:#55AEE0;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+    --shadow-md:0 8px 40px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B1119;
+  --surface:#141C27;
+  --border:#26313F;
+  --text:#F2F5F7;
+  --text2:#B6C0CC;
+  --text3:#7C8896;
+  --green:#34C795;
+  --green-dark:#16A37F;
+  --green-light:rgba(52,199,149,.14);
+  --red:#F27272;
+  --err-bg:rgba(242,114,114,.12);
+  --err-border:rgba(242,114,114,.35);
+  --err-text:#F5A3A3;
+  --brand:#3CA2DD;
+  --brand-hover:#55AEE0;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+  --shadow-md:0 8px 40px rgba(0,0,0,.5);
 }
 body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 a{color:var(--green-dark)}
@@ -51,13 +115,13 @@ a{color:var(--green-dark)}
    unreachable by a real user — off-screen, zero size, not tab-focusable. */
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 
-.submit-btn{width:100%;padding:12px 16px;border:none;border-radius:9px;background:var(--green);color:#fff;font:inherit;font-weight:600;font-size:15px;cursor:pointer;margin-top:6px}
-.submit-btn:hover{background:var(--green-dark)}
+.submit-btn{width:100%;padding:12px 16px;border:none;border-radius:9px;background:var(--brand);color:#fff;font:inherit;font-weight:600;font-size:15px;cursor:pointer;margin-top:6px}
+.submit-btn:hover{background:var(--brand-hover)}
 .submit-btn:disabled{opacity:.6;cursor:default}
-.err-msg{background:#FDEDEC;border:1px solid #F3C6C6;color:#9B2C2C;font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:16px;display:none}
+.err-msg{background:var(--err-bg);border:1px solid var(--err-border);color:var(--err-text);font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:16px;display:none}
 
 .confirm{text-align:center;padding:20px 8px}
-.confirm .icon{width:56px;height:56px;border-radius:50%;background:#E7F7F1;color:var(--green-dark);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:28px}
+.confirm .icon{width:56px;height:56px;border-radius:50%;background:var(--green-light);color:var(--green-dark);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:28px}
 .confirm h2{font-size:19px;margin-bottom:8px}
 .confirm p{color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:14px}
 .confirm .ticket-id{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-weight:700;font-size:16px;letter-spacing:.5px;margin-bottom:6px}
@@ -67,7 +131,18 @@ a{color:var(--green-dark)}
 .file-chip{position:relative;width:72px}
 .file-chip img{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;background:var(--bg)}
 .file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+.file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+
+.theme-switcher{position:relative}
+.theme-btn{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer;padding:0}
+.theme-btn:hover{background:var(--bg)}
+.theme-btn svg{width:16px;height:16px}
+.theme-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;min-width:140px;z-index:50}
+.theme-menu[hidden]{display:none}
+.theme-option{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:none;background:none;border-radius:6px;font:inherit;font-size:13px;color:var(--text2);cursor:pointer;text-align:left}
+.theme-option:hover{background:var(--bg)}
+.theme-option.active{color:var(--text);font-weight:600}
+.theme-option.active::after{content:'✓';margin-left:auto}
 </style>
 </head>
 <body>
@@ -81,6 +156,16 @@ a{color:var(--green-dark)}
   <div style="display:flex;gap:16px;align-items:center">
     <a class="hdr-staff-link" href="/track.html">Track a ticket</a>
     <a class="hdr-staff-link" href="/staff.html">Staff sign in</a>
+    <div class="theme-switcher">
+      <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+      <div class="theme-menu" id="theme-menu" hidden>
+        <button class="theme-option" type="button" data-theme="light">☀️ Light</button>
+        <button class="theme-option" type="button" data-theme="dark">🌙 Dark</button>
+        <button class="theme-option" type="button" data-theme="system">🖥️ System</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -140,6 +225,53 @@ a{color:var(--green-dark)}
 </div>
 
 <script>
+// ── Theme switcher (Light / Dark / System) ──
+// Shared localStorage key ('hd_theme') means a preference set here also
+// applies on /staff.html and /track.html, and vice versa, since all three
+// pages are the same origin.
+(function(){
+  var STORAGE_KEY = 'hd_theme';
+  var btn = document.getElementById('theme-btn');
+  var menu = document.getElementById('theme-menu');
+
+  function currentPref(){
+    try { return localStorage.getItem(STORAGE_KEY) || 'system'; } catch (e) { return 'system'; }
+  }
+  function applyTheme(pref){
+    if (pref === 'dark' || pref === 'light') document.documentElement.setAttribute('data-theme', pref);
+    else document.documentElement.removeAttribute('data-theme');
+  }
+  function highlightActive(){
+    var pref = currentPref();
+    Array.prototype.forEach.call(menu.querySelectorAll('.theme-option'), function(opt){
+      opt.classList.toggle('active', opt.dataset.theme === pref);
+    });
+  }
+  function closeMenu(){ menu.hidden = true; }
+
+  highlightActive();
+
+  btn.addEventListener('click', function(e){
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  menu.addEventListener('click', function(e){
+    var opt = e.target.closest('.theme-option');
+    if (!opt) return;
+    var pref = opt.dataset.theme;
+    try { localStorage.setItem(STORAGE_KEY, pref); } catch (e2) {}
+    applyTheme(pref);
+    highlightActive();
+    closeMenu();
+  });
+  document.addEventListener('click', function(e){
+    if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') closeMenu();
+  });
+})();
+
 function escapeHtml(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
     return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];

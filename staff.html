@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('hd_theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
 <title>Staff Console — Jet City IT Help Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -24,8 +32,30 @@
   --amber-light:#FDF3DE;
   --blue:#2563AC;
   --blue-light:#E7F0FB;
+  /* Deliberately NOT redefined in the dark blocks below -- see index.html
+     for why (fixed "dark chip, white text" accent, not the adaptive
+     foreground color). */
+  --ink:#0F1724;
   --shadow-sm:0 1px 2px rgba(15,23,36,.06);
   --shadow-md:0 8px 40px rgba(15,23,36,.14);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B1119; --surface:#141C27; --border:#26313F;
+    --text:#F2F5F7; --text2:#B6C0CC; --text3:#7C8896;
+    --green:#34C795; --green-dark:#16A37F; --green-light:rgba(52,199,149,.14);
+    --red:#F27272; --amber:#E0A63E; --amber-light:rgba(224,166,62,.14);
+    --blue:#7DB0E8; --blue-light:rgba(125,176,232,.14);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 8px 40px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B1119; --surface:#141C27; --border:#26313F;
+  --text:#F2F5F7; --text2:#B6C0CC; --text3:#7C8896;
+  --green:#34C795; --green-dark:#16A37F; --green-light:rgba(52,199,149,.14);
+  --red:#F27272; --amber:#E0A63E; --amber-light:rgba(224,166,62,.14);
+  --blue:#7DB0E8; --blue-light:rgba(125,176,232,.14);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 8px 40px rgba(0,0,0,.5);
 }
 body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 button{font:inherit;cursor:pointer}
@@ -62,7 +92,7 @@ button{font:inherit;cursor:pointer}
 .domain-sidebar-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:10px}
 .domain-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;color:var(--text2);cursor:pointer}
 .domain-item:hover{background:var(--bg)}
-.domain-item.active{background:var(--text);color:#fff}
+.domain-item.active{background:var(--ink);color:#fff}
 .domain-item .count{font-size:11px;color:var(--text3);font-variant-numeric:tabular-nums}
 .domain-item.active .count{color:rgba(255,255,255,.7)}
 .console-main{flex:1;min-width:0}
@@ -70,7 +100,7 @@ button{font:inherit;cursor:pointer}
 .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px}
 .filters{display:flex;gap:6px}
 .filter-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:13px;font-weight:600;color:var(--text2)}
-.filter-btn.active{background:var(--text);color:#fff;border-color:var(--text)}
+.filter-btn.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .refresh-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:13px;font-weight:600;color:var(--text2)}
 
 .table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
@@ -112,7 +142,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .ctrl label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px}
 .ctrl select,.ctrl input{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg)}
 .assign-me-btn{padding:7px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface);font-size:13px;font-weight:600;color:var(--text2)}
-.save-meta-btn{padding:7px 14px;border:none;border-radius:7px;background:var(--text);color:#fff;font-size:13px;font-weight:600}
+.save-meta-btn{padding:7px 14px;border:none;border-radius:7px;background:var(--ink);color:#fff;font-size:13px;font-weight:600}
 .save-meta-btn:disabled{opacity:.5}
 
 .thread{display:flex;flex-direction:column;gap:12px;margin-bottom:18px}
@@ -138,7 +168,18 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .file-chip{position:relative;width:64px}
 .file-chip img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;background:var(--bg)}
 .file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+.file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+
+.theme-switcher{position:relative}
+.theme-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;padding:0}
+.theme-btn:hover{background:var(--bg)}
+.theme-btn svg{width:17px;height:17px}
+.theme-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;min-width:150px;z-index:20}
+.theme-menu[hidden]{display:none}
+.theme-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:8px 10px;border:none;background:none;border-radius:7px;font-size:13px;font-weight:600;color:var(--text2);text-align:left}
+.theme-option:hover{background:var(--bg)}
+.theme-option.active{color:var(--text)}
+.theme-option.active::after{content:'✓'}
 </style>
 </head>
 <body>
@@ -176,6 +217,16 @@ tbody td{padding:13px 16px;vertical-align:middle}
     </div>
     <div class="hdr-right">
       <span class="user-badge" id="user-badge"></span>
+      <div class="theme-switcher">
+        <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </button>
+        <div class="theme-menu" id="theme-menu" hidden>
+          <button class="theme-option" type="button" data-theme="light">☀️ Light</button>
+          <button class="theme-option" type="button" data-theme="dark">🌙 Dark</button>
+          <button class="theme-option" type="button" data-theme="system">🖥️ System</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -263,6 +314,39 @@ tbody td{padding:13px 16px;vertical-align:middle}
 
 <script src="/vendor/msal-browser-2.38.3.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
 <script>
+(function(){
+  var STORAGE_KEY = 'hd_theme';
+  var btn = document.getElementById('theme-btn');
+  var menu = document.getElementById('theme-menu');
+  function currentPref(){ try { return localStorage.getItem(STORAGE_KEY) || 'system'; } catch (e) { return 'system'; } }
+  function applyTheme(pref){
+    if (pref === 'dark' || pref === 'light') document.documentElement.setAttribute('data-theme', pref);
+    else document.documentElement.removeAttribute('data-theme');
+  }
+  function highlightActive(){
+    var pref = currentPref();
+    Array.prototype.forEach.call(menu.querySelectorAll('.theme-option'), function(opt){
+      opt.classList.toggle('active', opt.dataset.theme === pref);
+    });
+  }
+  function closeMenu(){ menu.hidden = true; }
+  highlightActive();
+  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; });
+  menu.addEventListener('click', function(e){
+    var opt = e.target.closest('.theme-option');
+    if (!opt) return;
+    var pref = opt.dataset.theme;
+    try { localStorage.setItem(STORAGE_KEY, pref); } catch (e2) {}
+    applyTheme(pref);
+    highlightActive();
+    closeMenu();
+  });
+  document.addEventListener('click', function(e){
+    if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); });
+})();
+
 // ── Microsoft Login (MSAL) — reuses the crew-calendar app's Entra registration ──
 const msalConfig = {
   auth: {

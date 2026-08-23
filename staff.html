@@ -72,6 +72,8 @@ tbody tr:hover{background:var(--bg)}
 tbody td{padding:13px 16px;vertical-align:middle}
 .subject-cell{font-weight:600}
 .req-cell{color:var(--text2);font-size:13px}
+.assignee-cell{color:var(--text2);font-size:13px}
+.assignee-cell.unassigned{color:var(--text3);font-style:italic}
 .updated-cell{color:var(--text3);font-size:13px;white-space:nowrap}
 .empty-row td{text-align:center;color:var(--text3);padding:40px 16px}
 
@@ -181,10 +183,10 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="table-card">
       <table>
         <thead>
-          <tr><th>Subject</th><th>Requester</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
+          <tr><th>Subject</th><th>Requester</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
         </thead>
         <tbody id="tickets-tbody">
-          <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+          <tr class="empty-row"><td colspan="6">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -413,21 +415,31 @@ function relativeTime(iso){
   return days + 'd ago';
 }
 
+// Same lookup the assignee dropdown's options use, so the list and the
+// detail view always agree on how a person is labeled.
+function assigneeLabel(upn){
+  if (!upn) return null;
+  const match = staffDirectory.filter(function(s){ return s.upn === upn; })[0];
+  return (match && match.name) || upn;
+}
+
 async function loadTickets(){
   const tbody = document.getElementById('tickets-tbody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Loading…</td></tr>';
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Loading…</td></tr>';
   try {
     const qs = currentStatusFilter ? ('?status=' + encodeURIComponent(currentStatusFilter)) : '';
     const data = await apiFetch('/tickets' + qs);
     const tickets = data.tickets || [];
     if (!tickets.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No tickets here.</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No tickets here.</td></tr>';
       return;
     }
     tbody.innerHTML = tickets.map(function(t){
+      const label = assigneeLabel(t.assignee);
       return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
         '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
         '<td class="req-cell">' + escapeHtml(t.name) + '</td>' +
+        '<td class="' + (label ? 'assignee-cell' : 'assignee-cell unassigned') + '">' + escapeHtml(label || 'Unassigned') + '</td>' +
         '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
         '<td class="pri-' + t.priority + '">' + t.priority + '</td>' +
         '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
@@ -437,7 +449,7 @@ async function loadTickets(){
       tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
     });
   } catch (e) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
   }
 }
 

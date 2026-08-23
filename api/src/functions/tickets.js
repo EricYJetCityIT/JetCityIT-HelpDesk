@@ -5,7 +5,7 @@ const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
-const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
+const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
 
 const STATUSES = ['Open', 'Pending', 'Resolved', 'Closed'];
 const PRIORITIES = ['Low', 'Normal', 'High'];
@@ -220,10 +220,11 @@ app.http('ticketReply', {
         throw e;
       }
 
+      const messageRowKey = genMessageRowKey();
       try {
         await table.createEntity({
           partitionKey: ticketId,
-          rowKey: genMessageRowKey(),
+          rowKey: messageRowKey,
           kind: 'message',
           authorType: 'staff',
           authorName: user.name,
@@ -235,6 +236,13 @@ app.http('ticketReply', {
         await table.updateEntity({ partitionKey: ticketId, rowKey: '0', updatedAt: now }, 'Merge');
       } catch (e) {
         await deleteAttachments(ticketId, attachments);
+        // The message row above may have been created successfully even
+        // though the following Merge failed (e.g. the ticket was deleted out
+        // from under this request between the two calls) -- clean it up too,
+        // not just the attachments, so a failed reply never leaves a message
+        // behind. A no-op (safely swallowed) if createEntity itself is what
+        // failed and the row was never written.
+        await table.deleteEntity(ticketId, messageRowKey).catch(() => {});
         throw e;
       }
 
@@ -255,6 +263,64 @@ app.http('ticketReply', {
       }
 
       return { status: 201, jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// Permanently deletes a ticket: every row in its Table Storage partition
+// (the meta row plus the full message thread) and every attachment blob
+// filed under it. There is no undo and no soft-delete/trash -- this is a
+// deliberate, staff-initiated destructive action, not something reachable
+// from a status change.
+app.http('ticketDelete', {
+  methods: ['DELETE'],
+  authLevel: 'anonymous',
+  route: 'tickets/{ticketId}',
+  handler: async (request, context) => {
+    try {
+      const user = await requireStaff(request);
+      const { ticketId } = request.params;
+      await ensureTable();
+      const table = getClient();
+
+      // Require a real ticket (a meta row at RowKey '0') before deleting
+      // anything. Without this, a crafted ticketId matching a *different*
+      // reserved partition name in this same table -- e.g. "CLIENT", where
+      // clientAccess.js stores every client's per-email access token --
+      // would pass straight through to the blanket row-deletion below and
+      // wipe it, since any non-empty PartitionKey scan used to satisfy the
+      // old "does this partition have rows" check.
+      try {
+        await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+
+      const rowKeys = [];
+      for await (const e of table.listEntities({ queryOptions: { filter: `PartitionKey eq '${odataEscape(ticketId)}'` } })) {
+        rowKeys.push(e.rowKey);
+      }
+
+      // allSettled (not all) so one row failing never aborts the rest of the
+      // batch mid-flight -- every row still gets its own delete attempt. A
+      // 404 on an individual row (e.g. a second staff member deleting the
+      // same ticket at nearly the same time) is treated as already-done
+      // rather than a real failure, so a losing race no longer surfaces a
+      // confusing 500 for a delete that in fact succeeded.
+      const results = await Promise.allSettled(rowKeys.map((rowKey) => table.deleteEntity(ticketId, rowKey)));
+      // Best-effort and unconditional -- runs even if a row above genuinely
+      // failed, so a partial row failure can never also skip attachment
+      // cleanup or the audit log entry the way an early-abort would.
+      await deleteAllAttachmentsForTicket(ticketId);
+      const realFailure = results.find((r) => r.status === 'rejected' && r.reason && r.reason.statusCode !== 404);
+
+      audit(context, user, 'ticket.delete', { ticketId, rowCount: rowKeys.length, partial: !!realFailure });
+      if (realFailure) throw realFailure.reason;
+
+      return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

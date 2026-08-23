@@ -144,6 +144,26 @@ async function deleteAttachments(ticketId, attachments) {
   await Promise.all((attachments || []).map((a) => deleteBlob(ticketId, a.id)));
 }
 
+// Wipes every blob under a ticket's prefix in one pass, rather than
+// collecting attachment ids from the meta row plus every message -- blobs
+// are always stored at `${ticketId}/${id}`, so a prefix listing is a
+// complete and simpler picture of what belongs to the ticket. Used only when
+// the whole ticket is being deleted; best-effort like deleteBlob above,
+// since by the time this runs the ticket's Table Storage rows are already
+// gone and an orphaned blob is just a storage-hygiene issue, not a
+// correctness or security one.
+async function deleteAllAttachmentsForTicket(ticketId) {
+  try {
+    await ensureContainer();
+    const container = getContainerClient();
+    for await (const blob of container.listBlobsFlat({ prefix: `${ticketId}/` })) {
+      await container.getBlockBlobClient(blob.name).deleteIfExists();
+    }
+  } catch (e) {
+    // swallow -- see comment above
+  }
+}
+
 // `rawList` is whatever the client sent as `attachments` on a ticket
 // create/reply request. Validated as a whole (count + combined size)
 // BEFORE any individual file is uploaded, so an oversized/over-count
@@ -203,6 +223,7 @@ function parseAttachments(json) {
 module.exports = {
   storeAttachments,
   deleteAttachments,
+  deleteAllAttachmentsForTicket,
   downloadAttachment,
   parseAttachments,
   rejectIfTooLarge,

@@ -133,6 +133,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px;flex-wrap:wrap}
 .detail-head h1{font-size:19px;letter-spacing:-.3px}
 .detail-id{color:var(--text3);font-size:12px;font-weight:600;margin-bottom:4px}
+.delete-ticket-btn{flex-shrink:0;padding:7px 12px;border:1px solid var(--red);border-radius:7px;background:var(--surface);color:var(--red);font-size:13px;font-weight:600}
+.delete-ticket-btn:hover{background:var(--red);color:#fff}
+.delete-ticket-btn:disabled{opacity:.5}
 .meta-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px;font-size:13px}
 @media(max-width:640px){.meta-grid{grid-template-columns:1fr 1fr}}
 .meta-grid label{display:block;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
@@ -239,7 +242,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <div class="console-main">
         <div class="toolbar">
           <div class="filters" id="filters">
-            <button class="filter-btn active" data-status="">All</button>
+            <button class="filter-btn active" data-status="" title="All active tickets -- Closed tickets are under the Closed tab">All</button>
             <button class="filter-btn" data-status="Open">Open</button>
             <button class="filter-btn" data-status="Pending">Pending</button>
             <button class="filter-btn" data-status="Resolved">Resolved</button>
@@ -269,6 +272,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <div class="detail-id" id="d-ticket-id"></div>
           <h1 id="d-subject"></h1>
         </div>
+        <button class="delete-ticket-btn" id="delete-ticket-btn" type="button">Delete ticket</button>
       </div>
       <div class="meta-grid">
         <div><label>Requester</label><div class="val" id="d-name"></div></div>
@@ -508,8 +512,12 @@ function emailDomain(email){
   return parts.length === 2 ? parts[1].toLowerCase() : '';
 }
 
+// "All" means all *active* tickets -- Closed ones are still fully visible,
+// just only under their own pill, so a busy queue doesn't get cluttered
+// with tickets nobody needs to act on anymore.
 function statusFiltered(){
-  return currentStatusFilter ? allTickets.filter(function(t){ return t.status === currentStatusFilter; }) : allTickets;
+  if (currentStatusFilter) return allTickets.filter(function(t){ return t.status === currentStatusFilter; });
+  return allTickets.filter(function(t){ return t.status !== 'Closed'; });
 }
 
 // Domain counts reflect the current status filter (so the sidebar only
@@ -624,6 +632,15 @@ let currentTicketId = null;
 async function openTicket(id){
   currentTicketId = id;
   showDetail();
+  // Cleared/disabled up front, before the fetch even starts -- otherwise a
+  // failed load (network blip, cold start) leaves the PREVIOUS ticket's
+  // subject/id sitting in the header while currentTicketId already points at
+  // the new one, and clicking Delete would show one ticket's name in the
+  // confirmation dialog while actually deleting a different one.
+  document.getElementById('d-ticket-id').textContent = '';
+  document.getElementById('d-subject').textContent = '';
+  document.getElementById('delete-ticket-btn').disabled = true;
+  document.getElementById('save-meta-btn').disabled = true;
   document.getElementById('thread').innerHTML = 'Loading…';
   try {
     const t = await apiFetch('/tickets/' + encodeURIComponent(id));
@@ -635,6 +652,8 @@ async function openTicket(id){
     document.getElementById('d-status').value = t.status;
     document.getElementById('d-priority').value = t.priority;
     document.getElementById('d-assignee').value = t.assignee || '';
+    document.getElementById('delete-ticket-btn').disabled = false;
+    document.getElementById('save-meta-btn').disabled = false;
 
     const thread = document.getElementById('thread');
     thread.innerHTML = (t.messages || []).map(function(m){
@@ -677,6 +696,29 @@ function loadAttachmentThumbs(container){
 
 document.getElementById('assign-me-btn').addEventListener('click', function(){
   document.getElementById('d-assignee').value = currentUserUpn;
+});
+
+document.getElementById('delete-ticket-btn').addEventListener('click', async function(){
+  const subject = document.getElementById('d-subject').textContent;
+  const confirmed = confirm(
+    'Permanently delete this ticket?\n\n"' + subject + '" (' + currentTicketId + ')\n\n' +
+    'The full message thread and any attachments will be lost. This cannot be undone.'
+  );
+  if (!confirmed) return;
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId), { method: 'DELETE' });
+    showConsole();
+    loadTickets();
+  } catch (e) {
+    alert('Failed to delete: ' + e.message);
+  } finally {
+    // Always reset, not just on failure -- this is one static button reused
+    // for every ticket, so leaving it disabled after a SUCCESSFUL delete
+    // would silently break deletion for the next ticket opened this session.
+    btn.disabled = false;
+  }
 });
 
 document.getElementById('save-meta-btn').addEventListener('click', async function(){

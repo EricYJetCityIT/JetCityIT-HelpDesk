@@ -162,6 +162,50 @@ fails the request) with a direct link to the ticket —
 ticket immediately instead of the list, rather than dropping the assignee
 onto the console's front page.
 
+## Deleting tickets
+
+`DELETE /api/tickets/{id}` (staff-only, same `requireStaff` gate as everything
+else in this file) permanently removes a ticket: every row in its Table
+Storage partition (the meta row plus the full message thread) and every
+attachment blob filed under it (`deleteAllAttachmentsForTicket` in
+`api/src/lib/attachments.js`, which wipes by the ticket's blob-name prefix
+rather than walking each message's attachment list). There is no soft-delete
+or trash — this is a deliberate, staff-initiated, irreversible action, never
+a side effect of closing or updating a ticket. The staff console requires an
+explicit confirmation dialog (naming the subject and ticket id) before
+calling it. The action is audit-logged (`ticket.delete`) like every other
+write in this file.
+
+It first confirms a real ticket (a meta row at RowKey `0`) exists before
+deleting anything — this table also holds unrelated data under other
+partition names (e.g. `CLIENT`, where `clientAccess.js` stores every
+client's per-email access token), and without this check a ticketId
+matching one of those would delete that data instead. Per-row deletion uses
+`Promise.allSettled`, not `Promise.all`, and tolerates an individual row
+already being gone (404) rather than treating it as a failure — so it can't
+abort partway through and skip the attachment cleanup/audit log the way an
+early-abort-on-first-error would, and a second concurrent delete of the same
+ticket resolves cleanly instead of surfacing a misleading 500.
+
+Known accepted limitation: deletion is list-then-delete, not a single atomic
+transaction, so a reply landing in the brief window between the delete's row
+listing and its row deletions could in principle still create a message row
+that isn't covered by that delete and survives as an orphan (invisible via
+the console either way, since both `ticketGet`/`ticketsList` require the
+meta row, which the delete removes). Both reply endpoints (`ticketReply` and
+`clientTicketReply`) now clean up their own just-created message row if the
+following status/timestamp update fails — covering the common case where the
+ticket disappears just after the reply started — but a full fix for the
+narrower remaining race would need per-partition locking, judged
+disproportionate for a tool with a handful of staff and no realistic
+concurrent-delete-during-reply traffic. Revisit if that assumption changes.
+
+The staff console's "All" filter also excludes `Closed` tickets by default
+(`statusFiltered()` in `staff.html`, with a tooltip on the "All" pill noting
+this) so a busy queue isn't cluttered with tickets nobody needs to act on —
+they're still fully visible under the dedicated "Closed" pill, this only
+changes what "All" means.
+
 ## Email notifications
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a
@@ -212,3 +256,14 @@ to go looking for it separately.
   your own UPN, not your display name. A staff member who's never signed
   into the console yet still appears in the dropdown, just labeled by email
   instead of name.
+- **Deletion**: close a ticket → it drops out of the "All" filter but still
+  shows under "Closed". Open a ticket and click "Delete ticket" → a
+  confirmation dialog names the subject and ticket id; cancel it → nothing
+  happens. Confirm it → the ticket disappears from every filter/domain view,
+  and re-fetching `GET /api/tickets/{id}` for that id now 404s. Attach an
+  image to a ticket before deleting it → its blob is gone from storage
+  afterward too (not just unreachable). `DELETE /api/tickets/CLIENT` (or any
+  other non-ticket partition name in the table) → 404, not a wipe of that
+  partition's data. Open a ticket, let its load fail (e.g. throttle the
+  network), then click "Delete ticket" → the button is disabled and the
+  header is blank rather than showing a stale previous ticket's name.

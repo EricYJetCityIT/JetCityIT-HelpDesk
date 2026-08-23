@@ -210,10 +210,11 @@ app.http('clientTicketReply', {
       }
 
       const now = new Date().toISOString();
+      const messageRowKey = genMessageRowKey();
       try {
         await table.createEntity({
           partitionKey: ticketId,
-          rowKey: genMessageRowKey(),
+          rowKey: messageRowKey,
           kind: 'message',
           authorType: 'client',
           authorName: meta.name,
@@ -232,6 +233,13 @@ app.http('clientTicketReply', {
         await table.updateEntity(update, 'Merge');
       } catch (e) {
         await deleteAttachments(ticketId, attachments);
+        // The message row above may have been created successfully even
+        // though the following Merge failed (e.g. the ticket was deleted out
+        // from under this request between the two calls) -- clean it up too,
+        // not just the attachments, so a failed reply never leaves a message
+        // behind. A no-op (safely swallowed) if createEntity itself is what
+        // failed and the row was never written.
+        await table.deleteEntity(ticketId, messageRowKey).catch(() => {});
         throw e;
       }
 

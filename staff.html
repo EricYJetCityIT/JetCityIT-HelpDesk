@@ -56,7 +56,17 @@ button{font:inherit;cursor:pointer}
 #denied-view p{color:var(--text2);font-size:14px;line-height:1.6}
 
 /* ── Console ── */
-#console-view{display:none;max-width:1100px;margin:0 auto;padding:28px 24px 60px}
+#console-view{display:none;max-width:1320px;margin:0 auto;padding:28px 24px 60px}
+.console-layout{display:flex;align-items:flex-start;gap:24px}
+.domain-sidebar{width:200px;flex:none;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:16px;position:sticky;top:28px}
+.domain-sidebar-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:10px}
+.domain-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;color:var(--text2);cursor:pointer}
+.domain-item:hover{background:var(--bg)}
+.domain-item.active{background:var(--text);color:#fff}
+.domain-item .count{font-size:11px;color:var(--text3);font-variant-numeric:tabular-nums}
+.domain-item.active .count{color:rgba(255,255,255,.7)}
+.console-main{flex:1;min-width:0}
+@media(max-width:760px){.console-layout{flex-direction:column}.domain-sidebar{width:100%;position:static}}
 .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px}
 .filters{display:flex;gap:6px}
 .filter-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:13px;font-weight:600;color:var(--text2)}
@@ -170,25 +180,33 @@ tbody td{padding:13px 16px;vertical-align:middle}
   </div>
 
   <div id="console-view">
-    <div class="toolbar">
-      <div class="filters" id="filters">
-        <button class="filter-btn active" data-status="">All</button>
-        <button class="filter-btn" data-status="Open">Open</button>
-        <button class="filter-btn" data-status="Pending">Pending</button>
-        <button class="filter-btn" data-status="Resolved">Resolved</button>
-        <button class="filter-btn" data-status="Closed">Closed</button>
+    <div class="console-layout">
+      <div class="domain-sidebar">
+        <div class="domain-sidebar-title">Domains</div>
+        <div id="domain-list"></div>
       </div>
-      <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
-    </div>
-    <div class="table-card">
-      <table>
-        <thead>
-          <tr><th>Subject</th><th>Requester</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
-        </thead>
-        <tbody id="tickets-tbody">
-          <tr class="empty-row"><td colspan="6">Loading…</td></tr>
-        </tbody>
-      </table>
+      <div class="console-main">
+        <div class="toolbar">
+          <div class="filters" id="filters">
+            <button class="filter-btn active" data-status="">All</button>
+            <button class="filter-btn" data-status="Open">Open</button>
+            <button class="filter-btn" data-status="Pending">Pending</button>
+            <button class="filter-btn" data-status="Resolved">Resolved</button>
+            <button class="filter-btn" data-status="Closed">Closed</button>
+          </div>
+          <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+        </div>
+        <div class="table-card">
+          <table>
+            <thead>
+              <tr><th>Subject</th><th>Requester</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
+            </thead>
+            <tbody id="tickets-tbody">
+              <tr class="empty-row"><td colspan="6">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -393,15 +411,89 @@ function showDetail(){
 document.getElementById('back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 
 // ── Ticket list ──
+// All tickets are fetched once and both the status pills and the domain
+// sidebar filter this same in-memory set client-side -- at help-desk
+// volume a full re-fetch per filter click is unnecessary, and filtering
+// in-memory makes switching between them instant.
+let allTickets = [];
 let currentStatusFilter = '';
+let currentDomainFilter = '';
+
+function emailDomain(email){
+  const parts = String(email || '').split('@');
+  return parts.length === 2 ? parts[1].toLowerCase() : '';
+}
+
+function statusFiltered(){
+  return currentStatusFilter ? allTickets.filter(function(t){ return t.status === currentStatusFilter; }) : allTickets;
+}
+
+// Domain counts reflect the current status filter (so the sidebar only
+// ever lists domains that actually have a ticket in the current view) --
+// if the previously-selected domain has none left under a new status
+// filter, fall back to "All tickets" rather than showing an empty list.
+function renderDomainSidebar(){
+  const base = statusFiltered();
+  const counts = {};
+  base.forEach(function(t){
+    const d = emailDomain(t.email);
+    if (d) counts[d] = (counts[d] || 0) + 1;
+  });
+  if (currentDomainFilter && !counts[currentDomainFilter]) currentDomainFilter = '';
+  const domains = Object.keys(counts).sort();
+
+  const list = document.getElementById('domain-list');
+  let html = '<div class="domain-item' + (currentDomainFilter === '' ? ' active' : '') + '" data-domain="">' +
+    '<span>All tickets</span><span class="count">' + base.length + '</span></div>';
+  html += domains.map(function(d){
+    return '<div class="domain-item' + (currentDomainFilter === d ? ' active' : '') + '" data-domain="' + escapeHtml(d) + '">' +
+      '<span>' + escapeHtml(d) + '</span><span class="count">' + counts[d] + '</span></div>';
+  }).join('');
+  list.innerHTML = html;
+}
+
+function renderTicketTable(){
+  const tbody = document.getElementById('tickets-tbody');
+  let tickets = statusFiltered();
+  if (currentDomainFilter) tickets = tickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; });
+  if (!tickets.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No tickets here.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tickets.map(function(t){
+    const label = assigneeLabel(t.assignee);
+    return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
+      '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
+      '<td class="req-cell">' + escapeHtml(t.name) + '</td>' +
+      '<td class="' + (label ? 'assignee-cell' : 'assignee-cell unassigned') + '">' + escapeHtml(label || 'Unassigned') + '</td>' +
+      '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
+      '<td class="pri-' + t.priority + '">' + t.priority + '</td>' +
+      '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
+    '</tr>';
+  }).join('');
+  Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
+    tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
+  });
+}
+
 document.getElementById('filters').addEventListener('click', function(e){
   const btn = e.target.closest('.filter-btn');
   if (!btn) return;
   document.querySelectorAll('.filter-btn').forEach(function(b){ b.classList.remove('active'); });
   btn.classList.add('active');
   currentStatusFilter = btn.dataset.status;
-  loadTickets();
+  renderDomainSidebar();
+  renderTicketTable();
 });
+
+document.getElementById('domain-list').addEventListener('click', function(e){
+  const item = e.target.closest('.domain-item');
+  if (!item) return;
+  currentDomainFilter = item.dataset.domain || '';
+  renderDomainSidebar();
+  renderTicketTable();
+});
+
 document.getElementById('refresh-btn').addEventListener('click', loadTickets);
 
 function relativeTime(iso){
@@ -427,27 +519,10 @@ async function loadTickets(){
   const tbody = document.getElementById('tickets-tbody');
   tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Loading…</td></tr>';
   try {
-    const qs = currentStatusFilter ? ('?status=' + encodeURIComponent(currentStatusFilter)) : '';
-    const data = await apiFetch('/tickets' + qs);
-    const tickets = data.tickets || [];
-    if (!tickets.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No tickets here.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = tickets.map(function(t){
-      const label = assigneeLabel(t.assignee);
-      return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
-        '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
-        '<td class="req-cell">' + escapeHtml(t.name) + '</td>' +
-        '<td class="' + (label ? 'assignee-cell' : 'assignee-cell unassigned') + '">' + escapeHtml(label || 'Unassigned') + '</td>' +
-        '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
-        '<td class="pri-' + t.priority + '">' + t.priority + '</td>' +
-        '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
-      '</tr>';
-    }).join('');
-    Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
-      tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
-    });
+    const data = await apiFetch('/tickets');
+    allTickets = data.tickets || [];
+    renderDomainSidebar();
+    renderTicketTable();
   } catch (e) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
   }

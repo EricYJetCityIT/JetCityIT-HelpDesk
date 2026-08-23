@@ -139,6 +139,29 @@ dataBase64}]`), not a separate upload call. Storage/validation lives in
   check instead of `!==`, since it's the one real secret the whole
   client-auth model depends on (ticket IDs are guessable).
 
+## Assigning tickets to staff
+
+The staff console's assignee field is a dropdown (`GET /api/staff`,
+staff-only) populated from `STAFF_UPNS`, with display names resolved via
+Microsoft Graph (`getUsersByUpns` in `api/src/lib/graph.js`) using the same
+app-only client-credentials flow as `sendMail`. This reuses an
+already-admin-consented application permission (`User.Read.All`, granted on
+the shared App Registration previously for the crew-calendar app) — no new
+consent grant was needed. Results are cached in memory for 30 minutes per
+Function instance; if the Graph lookup fails for any reason, the dropdown
+still works and just shows raw email addresses instead of names.
+
+`PATCH /api/tickets/{id}` validates `assignee` server-side against
+`STAFF_UPNS` (rejecting anything else with 400) — the dropdown only ever
+offers valid entries, but the assignee value doubles as an email address at
+notification time, so it's re-validated rather than trusted. When the
+assignee actually changes to a different, non-blank person, that person
+gets a best-effort email (`ASSIGN_NOTIFY_FAILED` logged on failure, never
+fails the request) with a direct link to the ticket —
+`staff.html?ticket={id}` reads that query param on load and opens the
+ticket immediately instead of the list, rather than dropping the assignee
+onto the console's front page.
+
 ## Email notifications
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a
@@ -182,3 +205,10 @@ to go looking for it separately.
   of the claimed type). Attach a 5+ file / oversized payload → 400 with a
   clear message, nothing written. Try fetching another ticket's attachment
   URL with a valid token for a *different* email → 404.
+- **Assignment**: open a ticket, pick a name from the Assignee dropdown,
+  Save → that person gets an emailed link that opens straight to the ticket
+  when clicked. Re-saving with the same assignee unchanged → no email (only
+  an actual change triggers one). "Assign to me" → sets the dropdown to
+  your own UPN, not your display name. A staff member who's never signed
+  into the console yet still appears in the dropdown, just labeled by email
+  instead of name.

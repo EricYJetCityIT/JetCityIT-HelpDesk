@@ -219,7 +219,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
         </div>
         <div class="ctrl">
           <label>Assignee</label>
-          <input type="text" id="d-assignee" placeholder="unassigned"/>
+          <select id="d-assignee">
+            <option value="">Unassigned</option>
+          </select>
         </div>
         <button class="assign-me-btn" id="assign-me-btn">Assign to me</button>
         <button class="save-meta-btn" id="save-meta-btn">Save changes</button>
@@ -331,6 +333,23 @@ async function apiFetchBlob(path){
   return res.blob();
 }
 
+let currentUserUpn = '';
+let staffDirectory = []; // [{upn, name}]
+
+async function loadStaffOptions(){
+  try {
+    const data = await apiFetch('/staff');
+    staffDirectory = data.staff || [];
+  } catch (e) {
+    staffDirectory = []; // dropdown still works, just shows only "Unassigned"
+  }
+  const sel = document.getElementById('d-assignee');
+  sel.innerHTML = '<option value="">Unassigned</option>' + staffDirectory.map(function(s){
+    var label = s.name ? (s.name + ' (' + s.upn + ')') : s.upn;
+    return '<option value="' + escapeHtml(s.upn) + '">' + escapeHtml(label) + '</option>';
+  }).join('');
+}
+
 async function afterSignIn(){
   document.getElementById('ms-login-overlay').style.display = 'none';
   try {
@@ -340,10 +359,20 @@ async function afterSignIn(){
       return;
     }
     document.getElementById('app-shell').style.display = 'block';
+    currentUserUpn = me.upn;
     const badge = document.getElementById('user-badge');
     badge.textContent = me.name || me.upn;
-    showConsole();
-    loadTickets();
+    // Options need to exist before openTicket() sets the select's value,
+    // otherwise setting .value to a UPN with no matching <option> yet
+    // silently falls back to blank instead of showing the real assignee.
+    await loadStaffOptions();
+    const deepLinkTicket = new URLSearchParams(location.search).get('ticket');
+    if (deepLinkTicket) {
+      openTicket(deepLinkTicket);
+    } else {
+      showConsole();
+      loadTickets();
+    }
   } catch (e) {
     console.error('Failed to load /me:', e);
     document.getElementById('denied-view').style.display = 'block';
@@ -476,8 +505,7 @@ function loadAttachmentThumbs(container){
 }
 
 document.getElementById('assign-me-btn').addEventListener('click', function(){
-  const badge = document.getElementById('user-badge').textContent;
-  document.getElementById('d-assignee').value = badge;
+  document.getElementById('d-assignee').value = currentUserUpn;
 });
 
 document.getElementById('save-meta-btn').addEventListener('click', async function(){

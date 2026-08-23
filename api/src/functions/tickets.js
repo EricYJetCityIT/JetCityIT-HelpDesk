@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { requireStaff, AuthError, authErrorResponse } = require('../lib/auth');
+const { requireStaff, AuthError, authErrorResponse, STAFF_UPNS } = require('../lib/auth');
 const { getClient, ensureTable, genMessageRowKey } = require('../lib/tables');
 const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
@@ -15,6 +15,13 @@ const PRIORITIES = ['Low', 'Normal', 'High'];
 // this is cheap defense-in-depth against filter injection regardless.
 function odataEscape(s) {
   return String(s).replace(/'/g, "''");
+}
+
+// staff.html reads ?ticket= on load and opens that ticket directly instead
+// of the list -- used so an assignment-notification email can link straight
+// to the relevant ticket rather than just the console's front page.
+function buildStaffTicketLink(ticketId) {
+  return `https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}`;
 }
 
 function metaToJson(e) {
@@ -119,6 +126,17 @@ app.http('ticketUpdate', {
       await ensureTable();
       const table = getClient();
 
+      // Fetched up front (not just relied on updateEntity's 404) so the
+      // previous assignee and subject are available for the "changed to a
+      // new person" check and notification email below.
+      let meta;
+      try {
+        meta = await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+
       const update = { partitionKey: ticketId, rowKey: '0', updatedAt: new Date().toISOString() };
 
       if (body.status !== undefined) {
@@ -130,17 +148,30 @@ app.http('ticketUpdate', {
         update.priority = body.priority;
       }
       if (body.assignee !== undefined) {
-        update.assignee = String(body.assignee || '').trim();
+        const assignee = String(body.assignee || '').trim().toLowerCase();
+        // The dropdown only ever offers STAFF_UPNS entries (or blank for
+        // unassigned) -- this rejects anything else rather than silently
+        // storing it, since assignee is also used as an email address below.
+        if (assignee && !STAFF_UPNS.includes(assignee)) throw new AuthError(400, 'Invalid assignee');
+        update.assignee = assignee;
       }
 
-      try {
-        await table.updateEntity(update, 'Merge');
-      } catch (e) {
-        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
-        throw e;
-      }
+      await table.updateEntity(update, 'Merge');
 
       audit(context, user, 'ticket.update', { ticketId, fields: Object.keys(body) });
+
+      const previousAssignee = String(meta.assignee || '').trim().toLowerCase();
+      if (update.assignee && update.assignee !== previousAssignee) {
+        try {
+          const html = `<p>You've been assigned a ticket:</p>
+<p><strong>${escapeHtml(meta.subject)}</strong><br/>Ticket ${escapeHtml(ticketId)}</p>
+<p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`;
+          await sendMail({ from: SUPPORT_MAILBOX, to: update.assignee, subject: `Assigned: ${meta.subject} [${ticketId}]`, html });
+        } catch (e) {
+          context.log('ASSIGN_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+        }
+      }
+
       return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);

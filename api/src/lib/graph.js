@@ -62,4 +62,31 @@ async function sendMail({ from, to, subject, html }) {
   }
 }
 
-module.exports = { sendMail, SUPPORT_MAILBOX };
+// Looks up display names for a list of UPNs -- used to label the staff
+// assignee dropdown. Reuses the same App Registration's already-consented
+// application-level User.Read.All permission (originally set up for the
+// crew-calendar app; confirmed present when checking API permissions for
+// this feature, so no new consent grant was needed). Best-effort per user:
+// a lookup failure for one UPN (e.g. a disabled/removed account still
+// listed in STAFF_UPNS) degrades to a null name rather than failing the
+// whole list.
+async function getUsersByUpns(upns) {
+  const token = await getAppToken();
+  return Promise.all(
+    upns.map(async (upn) => {
+      try {
+        const res = await fetch(
+          `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=displayName`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) return { upn, name: null };
+        const data = await res.json();
+        return { upn, name: data.displayName || null };
+      } catch (e) {
+        return { upn, name: null };
+      }
+    })
+  );
+}
+
+module.exports = { sendMail, getUsersByUpns, SUPPORT_MAILBOX };

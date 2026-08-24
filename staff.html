@@ -183,6 +183,42 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .theme-option:hover{background:var(--bg)}
 .theme-option.active{color:var(--text)}
 .theme-option.active::after{content:'✓'}
+
+/* ── Dashboard stat bar ── */
+.stats-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.stat-chip{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 16px;display:flex;flex-direction:column;gap:2px;min-width:80px}
+.stat-chip .n{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1;color:var(--text)}
+.stat-chip .l{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+.stat-chip.open .n{color:var(--blue)}
+.stat-chip.pending .n{color:var(--amber)}
+.stat-chip.resolved .n{color:var(--green-dark)}
+.stat-chip.closed .n{color:var(--text3)}
+
+/* ── Toolbar additions: search + export ── */
+.toolbar-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.search-input{font:inherit;font-size:13px;padding:7px 12px;border:1px solid var(--border);border-radius:20px;background:var(--surface);color:var(--text);min-width:220px}
+.export-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:13px;font-weight:600;color:var(--text2)}
+
+/* ── Aging indicator ── */
+.updated-cell.aging{color:var(--amber);font-weight:600}
+.updated-cell.stale{color:var(--red);font-weight:600}
+.age-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.age-dot.aging{background:var(--amber)}
+.age-dot.stale{background:var(--red)}
+
+/* ── Bulk actions ── */
+.check-col,.check-cell{width:36px}
+.bulk-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--blue-light);border:1px solid var(--blue);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px}
+.bulk-bar[hidden]{display:none}
+.bulk-bar select{font:inherit;font-size:13px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text)}
+.bulk-apply-btn{padding:6px 12px;border:none;border-radius:7px;background:var(--blue);color:#fff;font-size:13px;font-weight:600}
+.bulk-delete-btn{padding:6px 12px;border:1px solid var(--red);border-radius:7px;background:var(--surface);color:var(--red);font-size:13px;font-weight:600}
+.bulk-delete-btn:hover{background:var(--red);color:#fff}
+.bulk-clear-btn{padding:6px 10px;border:none;background:none;color:var(--text2);font-size:13px;font-weight:600;text-decoration:underline}
+#bulk-count{font-weight:700;margin-right:2px}
+
+/* ── Canned responses ── */
+.canned-select{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);margin-bottom:10px;display:block;width:100%}
 </style>
 </head>
 <body>
@@ -240,6 +276,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div id="domain-list"></div>
       </div>
       <div class="console-main">
+        <div class="stats-bar" id="stats-bar"></div>
         <div class="toolbar">
           <div class="filters" id="filters">
             <button class="filter-btn active" data-status="" title="All active tickets -- Closed tickets are under the Closed tab">All</button>
@@ -248,15 +285,33 @@ tbody td{padding:13px 16px;vertical-align:middle}
             <button class="filter-btn" data-status="Resolved">Resolved</button>
             <button class="filter-btn" data-status="Closed">Closed</button>
           </div>
-          <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+          <div class="toolbar-right">
+            <input type="search" class="search-input" id="search-input" placeholder="Search subject, id, or requester…"/>
+            <button class="export-btn" id="export-btn" type="button">⬇ Export CSV</button>
+            <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="bulk-bar" id="bulk-bar" hidden>
+          <span id="bulk-count"></span>
+          <select id="bulk-status">
+            <option value="">Change status…</option>
+            <option>Open</option><option>Pending</option><option>Resolved</option><option>Closed</option>
+          </select>
+          <button type="button" id="bulk-status-apply" class="bulk-apply-btn">Apply</button>
+          <select id="bulk-assignee">
+            <option value="">Change assignee…</option>
+          </select>
+          <button type="button" id="bulk-assignee-apply" class="bulk-apply-btn">Apply</button>
+          <button type="button" id="bulk-delete-btn" class="bulk-delete-btn">Delete selected</button>
+          <button type="button" id="bulk-clear-btn" class="bulk-clear-btn">Clear selection</button>
         </div>
         <div class="table-card">
           <table>
             <thead>
-              <tr><th>Subject</th><th>Requester</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
+              <tr><th class="check-col"><input type="checkbox" id="select-all-checkbox" aria-label="Select all"/></th><th>Subject</th><th>Requester</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
             </thead>
             <tbody id="tickets-tbody">
-              <tr class="empty-row"><td colspan="6">Loading…</td></tr>
+              <tr class="empty-row"><td colspan="7">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -306,6 +361,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="detail-card">
       <div class="thread" id="thread"></div>
       <div class="reply-box">
+        <select id="canned-select" class="canned-select">
+          <option value="">Insert a canned response…</option>
+        </select>
         <textarea id="reply-body" placeholder="Write a reply…"></textarea>
         <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
         <div class="file-hint">Up to 4 images, 10 MB each.</div>
@@ -451,11 +509,16 @@ async function loadStaffOptions(){
   } catch (e) {
     staffDirectory = []; // dropdown still works, just shows only "Unassigned"
   }
-  const sel = document.getElementById('d-assignee');
-  sel.innerHTML = '<option value="">Unassigned</option>' + staffDirectory.map(function(s){
+  const optionsHtml = staffDirectory.map(function(s){
     var label = s.name ? (s.name + ' (' + s.upn + ')') : s.upn;
     return '<option value="' + escapeHtml(s.upn) + '">' + escapeHtml(label) + '</option>';
   }).join('');
+  document.getElementById('d-assignee').innerHTML = '<option value="">Unassigned</option>' + optionsHtml;
+  // "__unassigned__" is a distinct sentinel from the placeholder's own ""
+  // value, so "no bulk change selected" and "set everyone to Unassigned"
+  // can't be confused with each other.
+  document.getElementById('bulk-assignee').innerHTML =
+    '<option value="">Change assignee…</option><option value="__unassigned__">Unassigned</option>' + optionsHtml;
 }
 
 async function afterSignIn(){
@@ -506,10 +569,72 @@ document.getElementById('back-btn').addEventListener('click', function(){ showCo
 let allTickets = [];
 let currentStatusFilter = '';
 let currentDomainFilter = '';
+let currentSearch = '';
+let selectedTicketIds = new Set();
 
 function emailDomain(email){
   const parts = String(email || '').split('@');
   return parts.length === 2 ? parts[1].toLowerCase() : '';
+}
+
+// Free-text match against subject/id/requester -- applied on top of the
+// status+domain filters, but doesn't affect the sidebar's domain counts
+// (search is a quick-find layer over the current view, not a persistent
+// navigation filter).
+function searchFiltered(tickets){
+  if (!currentSearch) return tickets;
+  const q = currentSearch.toLowerCase();
+  return tickets.filter(function(t){
+    return (t.subject || '').toLowerCase().indexOf(q) !== -1 ||
+      (t.ticketId || '').toLowerCase().indexOf(q) !== -1 ||
+      (t.name || '').toLowerCase().indexOf(q) !== -1 ||
+      (t.email || '').toLowerCase().indexOf(q) !== -1;
+  });
+}
+
+// Only Open/Pending tickets can go "stale" -- a Resolved/Closed ticket
+// sitting untouched is normal, not something needing attention.
+function ticketAgeClass(t){
+  if (t.status !== 'Open' && t.status !== 'Pending') return '';
+  const hrs = (Date.now() - new Date(t.createdAt).getTime()) / 3600000;
+  if (hrs >= 72) return 'stale';
+  if (hrs >= 24) return 'aging';
+  return '';
+}
+
+// Shows counts across EVERY status regardless of the active status pill (the
+// point of a dashboard is the full picture), scoped to the selected client
+// when the domain sidebar has one active.
+function renderStatsBar(){
+  const bar = document.getElementById('stats-bar');
+  const base = currentDomainFilter
+    ? allTickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; })
+    : allTickets;
+  const counts = { Open: 0, Pending: 0, Resolved: 0, Closed: 0 };
+  base.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(counts, t.status)) counts[t.status]++; });
+  const label = currentDomainFilter ? currentDomainFilter : 'All clients';
+  bar.innerHTML =
+    '<div class="stat-chip total"><div class="n">' + base.length + '</div><div class="l">' + escapeHtml(label) + '</div></div>' +
+    '<div class="stat-chip open"><div class="n">' + counts.Open + '</div><div class="l">Open</div></div>' +
+    '<div class="stat-chip pending"><div class="n">' + counts.Pending + '</div><div class="l">Pending</div></div>' +
+    '<div class="stat-chip resolved"><div class="n">' + counts.Resolved + '</div><div class="l">Resolved</div></div>' +
+    '<div class="stat-chip closed"><div class="n">' + counts.Closed + '</div><div class="l">Closed</div></div>';
+}
+
+function updateBulkBar(){
+  const bar = document.getElementById('bulk-bar');
+  const count = selectedTicketIds.size;
+  document.getElementById('bulk-count').textContent = count + ' selected';
+  bar.hidden = count === 0;
+}
+
+function syncSelectAllCheckbox(){
+  const boxes = document.querySelectorAll('.row-check');
+  const all = document.getElementById('select-all-checkbox');
+  if (!boxes.length) { all.checked = false; all.indeterminate = false; return; }
+  const checkedCount = Array.prototype.filter.call(boxes, function(cb){ return cb.checked; }).length;
+  all.checked = checkedCount === boxes.length;
+  all.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
 }
 
 // "All" means all *active* tickets -- Closed ones are still fully visible,
@@ -548,24 +673,41 @@ function renderTicketTable(){
   const tbody = document.getElementById('tickets-tbody');
   let tickets = statusFiltered();
   if (currentDomainFilter) tickets = tickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; });
+  tickets = searchFiltered(tickets);
+  // Selection only tracks tickets currently in view -- a ticket scrolled out
+  // by a filter/search change is dropped from the set rather than silently
+  // acted on later without being visible.
+  const visibleIds = {};
+  tickets.forEach(function(t){ visibleIds[t.ticketId] = true; });
+  Array.from(selectedTicketIds).forEach(function(id){ if (!visibleIds[id]) selectedTicketIds.delete(id); });
+
   if (!tickets.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No tickets here.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No tickets here.</td></tr>';
+    updateBulkBar();
+    syncSelectAllCheckbox();
     return;
   }
   tbody.innerHTML = tickets.map(function(t){
     const label = assigneeLabel(t.assignee);
+    const ageCls = ticketAgeClass(t);
     return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
+      '<td class="check-cell"><input type="checkbox" class="row-check" data-id="' + escapeHtml(t.ticketId) + '"' + (selectedTicketIds.has(t.ticketId) ? ' checked' : '') + '/></td>' +
       '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
       '<td class="req-cell">' + escapeHtml(t.name) + '</td>' +
       '<td class="' + (label ? 'assignee-cell' : 'assignee-cell unassigned') + '">' + escapeHtml(label || 'Unassigned') + '</td>' +
       '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
       '<td class="pri-' + t.priority + '">' + t.priority + '</td>' +
-      '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
+      '<td class="updated-cell' + (ageCls ? ' ' + ageCls : '') + '">' + (ageCls ? '<span class="age-dot ' + ageCls + '"></span>' : '') + relativeTime(t.updatedAt) + '</td>' +
     '</tr>';
   }).join('');
   Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
-    tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
+    tr.addEventListener('click', function(e){
+      if (e.target.closest('input')) return; // let the checkbox handle its own click
+      openTicket(tr.dataset.id);
+    });
   });
+  updateBulkBar();
+  syncSelectAllCheckbox();
 }
 
 document.getElementById('filters').addEventListener('click', function(e){
@@ -575,6 +717,7 @@ document.getElementById('filters').addEventListener('click', function(e){
   btn.classList.add('active');
   currentStatusFilter = btn.dataset.status;
   renderDomainSidebar();
+  renderStatsBar();
   renderTicketTable();
 });
 
@@ -583,10 +726,123 @@ document.getElementById('domain-list').addEventListener('click', function(e){
   if (!item) return;
   currentDomainFilter = item.dataset.domain || '';
   renderDomainSidebar();
+  renderStatsBar();
   renderTicketTable();
 });
 
 document.getElementById('refresh-btn').addEventListener('click', loadTickets);
+
+document.getElementById('search-input').addEventListener('input', function(e){
+  currentSearch = e.target.value.trim();
+  renderTicketTable();
+});
+
+// Delegated once on the (persistent) tbody element, rather than re-bound on
+// every render -- checkbox <input>s are recreated each render, but the
+// listener itself doesn't need to be.
+document.getElementById('tickets-tbody').addEventListener('change', function(e){
+  const cb = e.target.closest('.row-check');
+  if (!cb) return;
+  if (cb.checked) selectedTicketIds.add(cb.dataset.id);
+  else selectedTicketIds.delete(cb.dataset.id);
+  updateBulkBar();
+  syncSelectAllCheckbox();
+});
+
+document.getElementById('select-all-checkbox').addEventListener('change', function(e){
+  const checked = e.target.checked;
+  Array.prototype.forEach.call(document.querySelectorAll('.row-check'), function(cb){
+    if (checked) selectedTicketIds.add(cb.dataset.id);
+    else selectedTicketIds.delete(cb.dataset.id);
+  });
+  renderTicketTable();
+});
+
+document.getElementById('bulk-clear-btn').addEventListener('click', function(){
+  selectedTicketIds.clear();
+  renderTicketTable();
+});
+
+document.getElementById('bulk-status-apply').addEventListener('click', async function(){
+  const status = document.getElementById('bulk-status').value;
+  if (!status || !selectedTicketIds.size) return;
+  const btn = this;
+  btn.disabled = true;
+  const ids = Array.from(selectedTicketIds);
+  const results = await Promise.allSettled(ids.map(function(id){
+    return apiFetch('/tickets/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ status: status }) });
+  }));
+  btn.disabled = false;
+  const failed = results.filter(function(r){ return r.status === 'rejected'; }).length;
+  if (failed) alert(failed + ' of ' + ids.length + ' ticket(s) failed to update.');
+  document.getElementById('bulk-status').value = '';
+  selectedTicketIds.clear();
+  loadTickets();
+});
+
+document.getElementById('bulk-assignee-apply').addEventListener('click', async function(){
+  const raw = document.getElementById('bulk-assignee').value;
+  if (!raw || !selectedTicketIds.size) return;
+  const assignee = raw === '__unassigned__' ? '' : raw;
+  const btn = this;
+  btn.disabled = true;
+  const ids = Array.from(selectedTicketIds);
+  const results = await Promise.allSettled(ids.map(function(id){
+    return apiFetch('/tickets/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ assignee: assignee }) });
+  }));
+  btn.disabled = false;
+  const failed = results.filter(function(r){ return r.status === 'rejected'; }).length;
+  if (failed) alert(failed + ' of ' + ids.length + ' ticket(s) failed to update.');
+  document.getElementById('bulk-assignee').value = '';
+  selectedTicketIds.clear();
+  loadTickets();
+});
+
+document.getElementById('bulk-delete-btn').addEventListener('click', async function(){
+  const ids = Array.from(selectedTicketIds);
+  if (!ids.length) return;
+  if (!confirm('Permanently delete ' + ids.length + ' ticket' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
+  const btn = this;
+  btn.disabled = true;
+  const results = await Promise.allSettled(ids.map(function(id){
+    return apiFetch('/tickets/' + encodeURIComponent(id), { method: 'DELETE' });
+  }));
+  btn.disabled = false;
+  const failed = results.filter(function(r){ return r.status === 'rejected'; }).length;
+  if (failed) alert(failed + ' of ' + ids.length + ' ticket(s) failed to delete.');
+  selectedTicketIds.clear();
+  loadTickets();
+});
+
+// Prefixing a leading =/+/-/@ with a quote keeps a client-submitted subject
+// or name from being interpreted as a formula if the export is opened in
+// Excel/Sheets (classic CSV/formula injection).
+function csvCell(v){
+  v = String(v == null ? '' : v);
+  if (/^[=+\-@]/.test(v)) v = "'" + v;
+  return '"' + v.replace(/"/g, '""') + '"';
+}
+
+document.getElementById('export-btn').addEventListener('click', function(){
+  let tickets = statusFiltered();
+  if (currentDomainFilter) tickets = tickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; });
+  tickets = searchFiltered(tickets);
+  const cols = ['ticketId', 'subject', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'createdAt', 'updatedAt'];
+  const lines = [cols.map(csvCell).join(',')].concat(tickets.map(function(t){
+    return cols.map(function(c){
+      return csvCell(c === 'assignee' ? (assigneeLabel(t.assignee) || '') : t[c]);
+    }).join(',');
+  }));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'tickets-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
 
 function relativeTime(iso){
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -609,14 +865,16 @@ function assigneeLabel(upn){
 
 async function loadTickets(){
   const tbody = document.getElementById('tickets-tbody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Loading…</td></tr>';
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Loading…</td></tr>';
+  selectedTicketIds.clear(); // a fresh fetch invalidates any prior selection
   try {
     const data = await apiFetch('/tickets');
     allTickets = data.tickets || [];
     renderDomainSidebar();
+    renderStatsBar();
     renderTicketTable();
   } catch (e) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
   }
 }
 
@@ -739,6 +997,31 @@ document.getElementById('save-meta-btn').addEventListener('click', async functio
     btn.disabled = false;
   }
 });
+
+// ── Canned responses ──
+// Edit this list to change the available templates -- nothing else needs
+// to change, the dropdown and insert behavior are both generated from it.
+const CANNED_RESPONSES = [
+  { label: 'Requesting more info', body: "Thanks for reaching out -- could you send a screenshot of the error and let us know when this started happening?" },
+  { label: 'Password reset steps', body: "Here are the steps to reset your password:\n1. Go to the sign-in page and click \"Forgot password\"\n2. Enter your work email address\n3. Follow the reset link sent to your inbox\n\nLet us know if you don't receive that email within a few minutes." },
+  { label: 'Escalated to vendor', body: "We've escalated this to the vendor and are waiting on their response. We'll follow up here as soon as we hear back." },
+  { label: 'Resolved / closing', body: "This should be resolved now -- please confirm on your end when you get a chance. We'll close this ticket out if we don't hear back in a few days." },
+];
+
+(function(){
+  const sel = document.getElementById('canned-select');
+  sel.innerHTML = '<option value="">Insert a canned response…</option>' + CANNED_RESPONSES.map(function(r, i){
+    return '<option value="' + i + '">' + escapeHtml(r.label) + '</option>';
+  }).join('');
+  sel.addEventListener('change', function(){
+    if (sel.value === '') return;
+    const template = CANNED_RESPONSES[Number(sel.value)];
+    const ta = document.getElementById('reply-body');
+    ta.value = ta.value.trim() ? (ta.value.replace(/\s+$/, '') + '\n\n' + template.body) : template.body;
+    sel.value = '';
+    ta.focus();
+  });
+})();
 
 // ── Reply attachments ──
 const MAX_REPLY_FILES = 4;

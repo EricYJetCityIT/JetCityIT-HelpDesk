@@ -342,6 +342,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div><label>Requester</label><div class="val" id="d-name"></div></div>
         <div><label>Email</label><div class="val" id="d-email"></div></div>
         <div><label>Company</label><div class="val" id="d-company"></div></div>
+        <div><label>Satisfaction</label><div class="val" id="d-rating">—</div></div>
       </div>
       <div class="controls-row">
         <div class="ctrl">
@@ -841,7 +842,7 @@ document.getElementById('export-btn').addEventListener('click', function(){
   let tickets = statusFiltered();
   if (currentDomainFilter) tickets = tickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; });
   tickets = searchFiltered(tickets);
-  const cols = ['ticketId', 'subject', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'createdAt', 'updatedAt'];
+  const cols = ['ticketId', 'subject', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'rating', 'createdAt', 'updatedAt'];
   const lines = [cols.map(csvCell).join(',')].concat(tickets.map(function(t){
     return cols.map(function(c){
       return csvCell(c === 'assignee' ? (assigneeLabel(t.assignee) || '') : t[c]);
@@ -921,6 +922,9 @@ async function openTicket(id){
     document.getElementById('d-name').textContent = t.name;
     document.getElementById('d-email').textContent = t.email;
     document.getElementById('d-company').textContent = t.company || '—';
+    const ratingEl = document.getElementById('d-rating');
+    ratingEl.textContent = t.rating === 'yes' ? '👍 Satisfied' : t.rating === 'no' ? '👎 Not satisfied' : '—';
+    ratingEl.title = t.ratedAt ? ('Rated ' + relativeTime(t.ratedAt)) : '';
     document.getElementById('d-status').value = t.status;
     document.getElementById('d-priority').value = t.priority;
     document.getElementById('d-assignee').value = t.assignee || '';

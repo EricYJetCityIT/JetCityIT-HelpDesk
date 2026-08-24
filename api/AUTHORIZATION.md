@@ -230,6 +230,32 @@ breach, etc.) in the subject/description, defaulting to `Normal` otherwise.
 This is a best-effort pre-sort, not authoritative — staff can always change
 it by hand, and nothing security-sensitive depends on the result.
 
+## Satisfaction rating
+
+`POST /api/client/tickets/{id}/rating` (`{email, token, rating: 'yes'|'no'}`)
+lets a client give a 1-tap satisfaction signal from `/track.html`, using the
+exact same email+token auth and ownership re-check (`normalizeEmail(meta.email)
+=== normalizeEmail(email)`) as every other client route. Two things are
+enforced server-side, not just hidden in the UI: `rating` must be exactly
+`'yes'` or `'no'`, and the ticket's status must already be `Resolved` or
+`Closed` — rating a still-open ticket isn't a meaningful signal, and without
+this check a call straight to the endpoint (bypassing the UI, which only
+shows the prompt for resolved/closed tickets) could still write one. A
+repeat call overwrites the previous answer rather than appending, since only
+the latest answer matters. The rating is visible to staff in the ticket
+detail view (hover for when it was given) and in the CSV export, never
+emailed to anyone.
+
+A rating answers for one specific resolution attempt, so it's cleared
+(`rating`/`ratedAt` reset to empty) whenever the ticket reopens back to
+Open/Pending — either via a client's own reply (`clientTicketReply`'s
+auto-reopen) or a staff-initiated status change (`ticketUpdate`). Without
+this, a stale rating from a prior resolution would keep showing as
+"already answered" for whatever gets resolved next, in both the client's
+own prompt (`track.html`) and the staff console. Moving between Resolved
+and Closed is not treated as a reopen, since that's the same resolution
+just being formally closed out — the rating survives that transition.
+
 ## Email notifications
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a

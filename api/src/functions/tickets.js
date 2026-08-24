@@ -34,6 +34,8 @@ function metaToJson(e) {
     company: e.company,
     subject: e.subject,
     assignee: e.assignee || '',
+    rating: e.rating || null,
+    ratedAt: e.ratedAt || null,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -143,6 +145,15 @@ app.http('ticketUpdate', {
       if (body.status !== undefined) {
         if (!STATUSES.includes(body.status)) throw new AuthError(400, 'Invalid status');
         update.status = body.status;
+        // Same reasoning as clientTicketReply's auto-reopen: a rating
+        // answers for a specific resolution attempt, so moving a ticket
+        // back to Open/Pending invalidates it. Resolved<->Closed is not a
+        // reopen -- that's just closing the books on the same resolution --
+        // so the rating survives that transition.
+        if (update.status !== 'Resolved' && update.status !== 'Closed' && meta.rating) {
+          update.rating = '';
+          update.ratedAt = '';
+        }
       }
       if (body.priority !== undefined) {
         if (!PRIORITIES.includes(body.priority)) throw new AuthError(400, 'Invalid priority');

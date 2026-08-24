@@ -156,6 +156,13 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .reply-send-btn:hover{background:var(--green-dark)}
 .reply-send-btn:disabled{opacity:.6}
 
+.rating-title{font-weight:600;margin-bottom:10px}
+.rating-btns{display:flex;gap:10px;margin-bottom:10px}
+.rating-btn{padding:9px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-weight:600;font-size:14px;color:var(--text2)}
+.rating-btn:hover{background:var(--bg)}
+.rating-btn.active{border-color:var(--green);color:var(--green-dark);background:var(--green-light)}
+.rating-thanks{color:var(--text2);font-size:14px}
+
 .attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .attachment-thumb{display:block;width:64px;height:64px;border-radius:8px;border:1px solid var(--border);background:var(--bg);overflow:hidden}
 .attachment-thumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -187,6 +194,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <span class="hdr-name">Jet City IT Help Desk</span>
   </a>
   <div class="hdr-right" style="display:flex;gap:16px;align-items:center">
+    <a href="/faq.html">Help Center</a>
     <a href="/">New request</a>
     <div class="theme-switcher">
       <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
@@ -242,6 +250,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
   </div>
   <div class="detail-card">
     <div class="thread" id="thread"></div>
+    <div class="info-msg" id="reopen-notice" style="display:none">This ticket has been closed for a while. If this is a new or different issue, it's usually faster to <a href="/">submit a new ticket</a> instead of replying here -- otherwise go ahead and reply below to reopen it.</div>
     <div class="field">
       <textarea id="reply-body" placeholder="Add a reply…"></textarea>
     </div>
@@ -249,6 +258,14 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="file-hint">Up to 4 images, 10 MB each.</div>
     <div class="file-list" id="reply-file-list"></div>
     <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
+  </div>
+  <div class="detail-card" id="rating-card" style="display:none">
+    <div class="rating-title">Was this resolved to your satisfaction?</div>
+    <div class="rating-btns">
+      <button type="button" class="rating-btn" id="rating-yes-btn">👍 Yes</button>
+      <button type="button" class="rating-btn" id="rating-no-btn">👎 No</button>
+    </div>
+    <div class="rating-thanks" id="rating-thanks" style="display:none"></div>
   </div>
 </div>
 
@@ -455,6 +472,18 @@ async function openTicket(id){
         attachmentsHtml(t.ticketId, m.attachments) +
       '</div>';
     }).join('');
+
+    const reopenNotice = document.getElementById('reopen-notice');
+    const daysSinceUpdate = (Date.now() - new Date(t.updatedAt).getTime()) / 86400000;
+    reopenNotice.style.display = (t.status === 'Closed' && daysSinceUpdate > 30) ? 'block' : 'none';
+
+    const ratingCard = document.getElementById('rating-card');
+    if (t.status === 'Resolved' || t.status === 'Closed') {
+      ratingCard.style.display = 'block';
+      showRatingState(t.rating);
+    } else {
+      ratingCard.style.display = 'none';
+    }
   } catch (e) {
     if (e.status === 401 || e.status === 403) {
       forgetSession('Your tracking link has expired or is invalid. Request a new one below.');
@@ -476,6 +505,34 @@ function attachmentsHtml(ticketId, attachments){
     return '<a class="attachment-thumb" href="' + escapeHtml(url) + '" target="_blank" title="' + escapeHtml(a.fileName) + '"><img src="' + escapeHtml(url) + '" alt="' + escapeHtml(a.fileName) + '"/></a>';
   }).join('') + '</div>';
 }
+
+function showRatingState(rating){
+  document.getElementById('rating-yes-btn').classList.toggle('active', rating === 'yes');
+  document.getElementById('rating-no-btn').classList.toggle('active', rating === 'no');
+  const thanks = document.getElementById('rating-thanks');
+  if (rating) {
+    thanks.textContent = rating === 'yes'
+      ? "Thanks for your feedback — glad we could help!"
+      : "Thanks for your feedback — we'll take another look.";
+    thanks.style.display = 'block';
+  } else {
+    thanks.style.display = 'none';
+  }
+}
+
+async function sendRating(rating){
+  try {
+    await clientFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/rating', {
+      method: 'POST',
+      body: { email: session.email, token: session.token, rating: rating },
+    });
+    showRatingState(rating);
+  } catch (e) {
+    alert('Failed to save your feedback: ' + e.message);
+  }
+}
+document.getElementById('rating-yes-btn').addEventListener('click', function(){ sendRating('yes'); });
+document.getElementById('rating-no-btn').addEventListener('click', function(){ sendRating('no'); });
 
 document.getElementById('back-btn').addEventListener('click', loadTicketList);
 

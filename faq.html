@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('hd_theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
+<title>Help Center — Jet City IT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F8FA;
+  --surface:#FFFFFF;
+  --border:#E4E7EC;
+  --text:#0F1724;
+  --text2:#4B5565;
+  --text3:#8A93A3;
+  --green:#16A37F;
+  --green-dark:#0F8F6E;
+  --green-light:#E7F7F1;
+  --brand:#052A3F;
+  --brand-hover:#123A50;
+  --shadow-sm:0 1px 2px rgba(15,23,36,.06);
+  --shadow-md:0 8px 40px rgba(15,23,36,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B1119; --surface:#141C27; --border:#26313F;
+    --text:#F2F5F7; --text2:#B6C0CC; --text3:#7C8896;
+    --green:#34C795; --green-dark:#16A37F; --green-light:rgba(52,199,149,.14);
+    --brand:#3CA2DD; --brand-hover:#55AEE0;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 8px 40px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B1119; --surface:#141C27; --border:#26313F;
+  --text:#F2F5F7; --text2:#B6C0CC; --text3:#7C8896;
+  --green:#34C795; --green-dark:#16A37F; --green-light:rgba(52,199,149,.14);
+  --brand:#3CA2DD; --brand-hover:#55AEE0;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 8px 40px rgba(0,0,0,.5);
+}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--green-dark)}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
+.hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-logo img{width:100%;height:100%;object-fit:contain}
+.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
+.hdr-staff-link{font-size:13px;color:var(--text3);text-decoration:none}
+.hdr-staff-link:hover{color:var(--text2)}
+
+.wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+.wrap h1{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+.wrap>p.lede{color:var(--text2);font-size:15px;margin-bottom:32px}
+
+.cta-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:20px 24px;margin-bottom:28px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.cta-card p{color:var(--text2);font-size:14px}
+.cta-btn{padding:10px 18px;border:none;border-radius:9px;background:var(--brand);color:#fff;font-weight:600;font-size:14px;text-decoration:none;white-space:nowrap}
+.cta-btn:hover{background:var(--brand-hover)}
+
+.faq-section{margin-bottom:28px}
+.faq-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:10px}
+.faq-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;box-shadow:var(--shadow-sm);overflow:hidden}
+.faq-item summary{padding:14px 18px;font-weight:600;font-size:14.5px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.faq-item summary::-webkit-details-marker{display:none}
+.faq-item summary::after{content:'+';color:var(--text3);font-size:18px;font-weight:400;flex-shrink:0}
+.faq-item[open] summary::after{content:'−'}
+.faq-item .faq-body{padding:0 18px 16px;color:var(--text2);font-size:14px;line-height:1.6}
+.faq-item .faq-body p+p{margin-top:8px}
+
+.theme-switcher{position:relative}
+.theme-btn{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer;padding:0}
+.theme-btn:hover{background:var(--bg)}
+.theme-btn svg{width:16px;height:16px}
+.theme-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;min-width:140px;z-index:50}
+.theme-menu[hidden]{display:none}
+.theme-option{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:none;background:none;border-radius:6px;font:inherit;font-size:13px;color:var(--text2);cursor:pointer;text-align:left}
+.theme-option:hover{background:var(--bg)}
+.theme-option.active{color:var(--text);font-weight:600}
+.theme-option.active::after{content:'✓';margin-left:auto}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <a class="hdr-brand" href="/">
+    <div class="hdr-logo">
+      <img src="/logo.png" alt="Jet City IT logo"/>
+    </div>
+    <span class="hdr-name">Jet City IT Help Desk</span>
+  </a>
+  <div style="display:flex;gap:16px;align-items:center">
+    <a class="hdr-staff-link" href="/track.html">Track a ticket</a>
+    <a class="hdr-staff-link" href="/staff.html">Staff sign in</a>
+    <div class="theme-switcher">
+      <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+      <div class="theme-menu" id="theme-menu" hidden>
+        <button class="theme-option" type="button" data-theme="light">☀️ Light</button>
+        <button class="theme-option" type="button" data-theme="dark">🌙 Dark</button>
+        <button class="theme-option" type="button" data-theme="system">🖥️ System</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <h1>Help Center</h1>
+  <p class="lede">Quick answers to common questions. Don't see yours? Just submit a ticket.</p>
+
+  <div class="cta-card">
+    <p>Can't find what you're looking for?</p>
+    <a class="cta-btn" href="/">Submit a ticket</a>
+  </div>
+
+  <div class="faq-section">
+    <div class="faq-section-title">Using the help desk</div>
+    <details class="faq-item">
+      <summary>How do I submit a request?</summary>
+      <div class="faq-body"><p>Go to the <a href="/">home page</a> and fill out the form with your name, email, a short subject, and a description of the issue. You can attach up to 4 screenshots (PNG, JPEG, GIF, or WEBP, 10&nbsp;MB each) if that helps explain the problem.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>How long until someone responds?</summary>
+      <div class="faq-body"><p>A technician typically follows up within one business day. If something is urgent (a full outage, a security concern, "can't work at all"), say so directly in the subject or description -- those are flagged for a faster look.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>How do I check the status of my ticket?</summary>
+      <div class="faq-body"><p>Every ticket confirmation email includes a link that takes you straight to your ticket. You can also go to <a href="/track.html">Track a ticket</a> and enter your email -- we'll send a fresh link to your inbox showing every ticket filed under that address.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>I need to add more information to a ticket I already submitted. What do I do?</summary>
+      <div class="faq-body"><p>Open your ticket from the tracking link in your confirmation email (or request a new one from <a href="/track.html">Track a ticket</a>) and add a reply -- no need to submit a whole new request. Replying also reopens the ticket automatically if it had already been marked resolved.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>My ticket was closed, but the issue came back. What now?</summary>
+      <div class="faq-body"><p>If it's the exact same issue and the ticket was closed recently, go ahead and reply on it to reopen it. If it's been a while, or it feels like a new/different problem, it's usually faster for us if you <a href="/">submit a new ticket</a> instead -- that way it isn't buried at the bottom of an old thread.</p></div>
+    </details>
+  </div>
+
+  <div class="faq-section">
+    <div class="faq-section-title">Common issues</div>
+    <details class="faq-item">
+      <summary>I forgot my password / I'm locked out of my account.</summary>
+      <div class="faq-body"><p>Try your organization's normal "Forgot password" link first. If that doesn't work, or you're locked out entirely, submit a ticket with your username and which system you're trying to access, and we'll get you back in.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>My computer is running slow.</summary>
+      <div class="faq-body"><p>Before submitting a ticket, try a full restart (not just sign-out) -- it fixes a surprising number of slowdowns caused by updates or leftover background processes. If it's still slow afterward, let us know what you were doing when you noticed it, and roughly how long it's been happening.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>I can't connect to Wi-Fi or VPN.</summary>
+      <div class="faq-body"><p>Double-check you're using the correct network name and that Wi-Fi/VPN is actually toggled on. If you're off-site, confirm your internet connection works for other things first. Still stuck? Submit a ticket and mention whether this is happening at the office, at home, or both.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>A printer or shared device isn't working.</summary>
+      <div class="faq-body"><p>Note which printer/device (by name or location) and the exact error message, if any. A photo of the printer's display or an error screenshot attached to your ticket helps us diagnose it faster.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary>I think I clicked something suspicious (phishing email, strange popup, etc.).</summary>
+      <div class="faq-body"><p>Submit a ticket right away and mark it urgent in the subject line -- don't wait. Include what you clicked or entered, if you remember, and avoid restarting your computer until we've had a chance to take a look.</p></div>
+    </details>
+  </div>
+</div>
+
+<script>
+(function(){
+  var STORAGE_KEY = 'hd_theme';
+  var btn = document.getElementById('theme-btn');
+  var menu = document.getElementById('theme-menu');
+  function currentPref(){ try { return localStorage.getItem(STORAGE_KEY) || 'system'; } catch (e) { return 'system'; } }
+  function applyTheme(pref){
+    if (pref === 'dark' || pref === 'light') document.documentElement.setAttribute('data-theme', pref);
+    else document.documentElement.removeAttribute('data-theme');
+  }
+  function highlightActive(){
+    var pref = currentPref();
+    Array.prototype.forEach.call(menu.querySelectorAll('.theme-option'), function(opt){
+      opt.classList.toggle('active', opt.dataset.theme === pref);
+    });
+  }
+  function closeMenu(){ menu.hidden = true; }
+  highlightActive();
+  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; });
+  menu.addEventListener('click', function(e){
+    var opt = e.target.closest('.theme-option');
+    if (!opt) return;
+    var pref = opt.dataset.theme;
+    try { localStorage.setItem(STORAGE_KEY, pref); } catch (e2) {}
+    applyTheme(pref);
+    highlightActive();
+    closeMenu();
+  });
+  document.addEventListener('click', function(e){
+    if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); });
+})();
+</script>
+</body>
+</html>

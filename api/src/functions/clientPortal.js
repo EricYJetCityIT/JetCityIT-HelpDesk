@@ -29,6 +29,7 @@ function ticketToClientJson(e) {
     status: e.status,
     priority: e.priority,
     subject: e.subject,
+    rating: e.rating || null,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -234,7 +235,14 @@ app.http('clientTicketReply', {
         // re-triage from Open rather than the reply going unnoticed in a
         // closed ticket.
         const update = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
-        if (meta.status !== 'Open') update.status = 'Open';
+        if (meta.status !== 'Open') {
+          update.status = 'Open';
+          // A satisfaction rating answers "was THIS resolution good enough"
+          // -- once the ticket reopens, that answer no longer describes the
+          // ticket's current state and must not keep showing as already
+          // answered for whatever gets resolved next.
+          if (meta.rating) { update.rating = ''; update.ratedAt = ''; }
+        }
         await table.updateEntity(update, 'Merge');
       } catch (e) {
         await deleteAttachments(ticketId, attachments);
@@ -260,6 +268,61 @@ app.http('clientTicketReply', {
       }
 
       return { status: 201, jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// A 1-tap satisfaction signal, only meaningful (and only shown in the UI)
+// once a ticket is actually Resolved/Closed -- enforced server-side too,
+// not just hidden in the UI, since this is reached via the same
+// email+token auth as every other client route and could otherwise be
+// called directly against a still-open ticket.
+app.http('clientTicketRating', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'client/tickets/{ticketId}/rating',
+  handler: async (request, context) => {
+    try {
+      const ip = clientIp(request);
+      const rl = checkRateLimit('client-rating-ip:' + ip, 20, 60 * 1000);
+      if (!rl.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
+      }
+
+      const body = await request.json().catch(() => ({}));
+      const email = String(body.email || '');
+      const token = String(body.token || '');
+      await verifyClientToken(email, token);
+
+      const rating = String(body.rating || '');
+      if (rating !== 'yes' && rating !== 'no') throw new AuthError(400, 'Invalid rating');
+
+      const { ticketId } = request.params;
+      await ensureTable();
+      const table = getClient();
+
+      let meta;
+      try {
+        meta = await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+      if (normalizeEmail(meta.email) !== normalizeEmail(email)) {
+        return { status: 404, jsonBody: { error: 'Ticket not found' } };
+      }
+      if (meta.status !== 'Resolved' && meta.status !== 'Closed') {
+        throw new AuthError(400, 'This ticket has not been resolved yet.');
+      }
+
+      // Overwrite, not append -- a client can change their mind, and only
+      // the latest answer is meaningful.
+      await table.updateEntity({ partitionKey: ticketId, rowKey: '0', rating, ratedAt: new Date().toISOString() }, 'Merge');
+      audit(context, null, 'ticket.rate', { ticketId, rating });
+
+      return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

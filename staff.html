@@ -467,20 +467,67 @@ async function msSignIn(){
 
 async function getApiToken(){
   if (!msalAccount) throw new Error('Not signed in');
-  try {
-    const r = await msalInstance.acquireTokenSilent({ scopes: API_SCOPES, account: msalAccount });
-    return r.accessToken;
-  } catch(e) {
-    const r = await msalInstance.acquireTokenPopup({ scopes: API_SCOPES, account: msalAccount });
-    return r.accessToken;
-  }
+  const r = await msalInstance.acquireTokenSilent({ scopes: API_SCOPES, account: msalAccount });
+  return r.accessToken;
+}
+
+// Called when a silent token refresh genuinely needs an interactive prompt
+// to renew (see the instanceof check in getTokenOrReauth below). Always
+// reached from deep inside an async call chain (apiFetch -> getApiToken),
+// never directly inside a click handler -- acquireTokenPopup in that
+// situation is a known MSAL footgun: most browsers block a window.open()
+// that isn't synchronous with a user gesture, and MSAL doesn't always
+// reject promptly when that happens, so the call can silently hang for
+// minutes with no error before eventually giving up. A full-page redirect
+// has no such dependency (same mechanism the initial sign-in already uses),
+// so it's used here too instead of a popup. `claims` is forwarded when the
+// triggering error carried one (a Conditional Access / step-up-MFA
+// challenge) -- without echoing it back, the fresh sign-in might not
+// actually satisfy whatever policy caused the original failure, and the
+// very next silent check would just fail the same way again.
+async function reauthenticate(claims){
+  const req = { scopes: API_SCOPES, account: msalAccount };
+  if (claims) req.claims = claims;
+  await msalInstance.acquireTokenRedirect(req);
 }
 
 function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
+// getApiToken() throwing doesn't always mean interactive sign-in is needed
+// -- a transient network/backend hiccup on the silent check must not be
+// treated the same way, or a temporary issue turns into a forced full-page
+// reload. InteractionRequiredAuthError is MSAL's own signal that a fresh
+// prompt is genuinely required; anything else is just rethrown as an
+// ordinary request failure for the caller's existing error handling.
+async function getTokenOrReauth(){
+  try {
+    return await getApiToken();
+  } catch (e) {
+    if (!(e instanceof msal.InteractionRequiredAuthError)) throw e;
+
+    // A redirect discards anything typed but not yet sent -- give the user
+    // a chance to notice before it silently pulls a reply/note draft (or
+    // staged attachments) out from under them. No prompt if there's
+    // nothing to lose, which covers the common case (initial sign-in,
+    // browsing the ticket list) without adding a needless confirm().
+    const draft = document.getElementById('reply-body').value.trim() ||
+      document.getElementById('note-body').value.trim() ||
+      replySelectedFiles.length > 0;
+    if (draft && !confirm(
+      "Your session needs to be renewed to continue. This will reload the page -- " +
+      "copy anything you're writing first if you want to keep it.\n\nContinue now?"
+    )) {
+      throw e;
+    }
+
+    await reauthenticate(e.claims);
+    throw e;
+  }
+}
+
 async function apiFetch(path, opts){
   opts = opts || {};
-  const token = await getApiToken();
+  const token = await getTokenOrReauth();
   const headers = Object.assign({ 'X-Jetcity-Authorization': 'Bearer ' + token }, opts.headers || {});
   if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   const fetchOpts = Object.assign({}, opts, { headers });
@@ -503,7 +550,7 @@ async function apiFetch(path, opts){
 // plain <img src="..."> can't load them directly -- fetch the bytes with
 // the auth header attached, then hand the caller a blob: object URL.
 async function apiFetchBlob(path){
-  const token = await getApiToken();
+  const token = await getTokenOrReauth();
   const headers = { 'X-Jetcity-Authorization': 'Bearer ' + token };
   let res = await fetch('/api' + path, { headers: headers });
   if (!res.ok && res.status >= 500) {

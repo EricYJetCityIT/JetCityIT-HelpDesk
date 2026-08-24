@@ -147,7 +147,12 @@ app.http('clientTicketGet', {
       const messages = [];
       for await (const e of table.listEntities({ queryOptions: { filter: `PartitionKey eq '${odataEscape(ticketId)}'` } })) {
         if (e.kind === 'meta') meta = e;
-        else messages.push(e);
+        // Internal staff notes (kind === 'note') are deliberately excluded --
+        // this is the client-facing endpoint, and a note is only ever meant
+        // for staff eyes. Anything other than 'meta'/'message' is dropped
+        // rather than assumed safe to show, so a future new kind defaults to
+        // hidden here instead of leaking by omission.
+        else if (e.kind === 'message') messages.push(e);
       }
       // Owning email must match -- a valid token for one address must never
       // unlock a ticket filed under a different one, even by guessed ID.

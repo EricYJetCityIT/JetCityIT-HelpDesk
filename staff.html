@@ -152,6 +152,8 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .msg{border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.5;max-width:92%}
 .msg-client{background:var(--bg);border:1px solid var(--border);align-self:flex-start}
 .msg-staff{background:var(--green-light);align-self:flex-end}
+.msg-note{background:var(--amber-light);border:1px dashed var(--amber);align-self:stretch;max-width:100%}
+.msg-note .msg-head{color:var(--amber)}
 .msg-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:700;margin-bottom:4px}
 .msg-client .msg-head{color:var(--text2)}
 .msg-staff .msg-head{color:var(--green-dark)}
@@ -162,6 +164,13 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .reply-send-btn{padding:9px 18px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:14px}
 .reply-send-btn:hover{background:var(--green-dark)}
 .reply-send-btn:disabled{opacity:.6}
+
+.note-box{border-top:1px dashed var(--border);margin-top:18px;padding-top:16px}
+.note-box-label{font-size:12px;font-weight:700;color:var(--amber);margin-bottom:8px}
+.note-box textarea{width:100%;min-height:60px;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--amber);border-radius:9px;background:var(--amber-light);resize:vertical;margin-bottom:10px}
+.note-send-btn{padding:8px 16px;border:1px solid var(--amber);border-radius:8px;background:var(--surface);color:var(--amber);font-weight:600;font-size:13px}
+.note-send-btn:hover{background:var(--amber);color:#fff}
+.note-send-btn:disabled{opacity:.6}
 
 .attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .attachment-thumb{display:block;width:64px;height:64px;border-radius:8px;border:1px solid var(--border);background:var(--bg);overflow:hidden}
@@ -369,6 +378,11 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div class="file-hint">Up to 4 images, 10 MB each.</div>
         <div class="file-list" id="reply-file-list"></div>
         <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
+      </div>
+      <div class="note-box">
+        <div class="note-box-label">📝 Internal note -- staff only, never sent to the client</div>
+        <textarea id="note-body" placeholder="Add a note for the team…"></textarea>
+        <button class="note-send-btn" id="note-send-btn" type="button">Add note</button>
       </div>
     </div>
   </div>
@@ -915,6 +929,12 @@ async function openTicket(id){
 
     const thread = document.getElementById('thread');
     thread.innerHTML = (t.messages || []).map(function(m){
+      if (m.kind === 'note') {
+        return '<div class="msg msg-note">' +
+          '<div class="msg-head"><span>📝 ' + escapeHtml(m.authorName) + ' (internal note)</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
+          '<div class="msg-body">' + escapeHtml(m.body) + '</div>' +
+        '</div>';
+      }
       const cls = m.authorType === 'staff' ? 'msg-staff' : 'msg-client';
       const who = m.authorType === 'staff' ? (m.authorName + ' (staff)') : m.authorName;
       return '<div class="msg ' + cls + '">' +
@@ -1085,6 +1105,26 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
     await openTicket(currentTicketId);
   } catch (e) {
     alert('Failed to send reply: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('note-send-btn').addEventListener('click', async function(){
+  const ta = document.getElementById('note-body');
+  const text = ta.value.trim();
+  if (!text) return;
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/notes', {
+      method: 'POST',
+      body: JSON.stringify({ body: text }),
+    });
+    ta.value = '';
+    await openTicket(currentTicketId);
+  } catch (e) {
+    alert('Failed to add note: ' + e.message);
   } finally {
     btn.disabled = false;
   }

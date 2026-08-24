@@ -14,6 +14,22 @@ function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
+// Best-effort pre-triage only -- staff can always change priority by hand in
+// the console, so a false positive here just means one ticket sits in the
+// High filter a little too generously, and a false negative just means a
+// human has to notice it like any other ticket. Never treated as
+// authoritative or used for anything security-sensitive.
+const HIGH_PRIORITY_KEYWORDS = [
+  'urgent', 'asap', 'emergency', 'critical', 'outage', 'down', "can't work",
+  'cannot work', 'not working', 'security breach', 'hacked', 'ransomware',
+  'data loss', 'production down',
+];
+
+function autoTriagePriority(subject, description) {
+  const text = (subject + ' ' + description).toLowerCase();
+  return HIGH_PRIORITY_KEYWORDS.some((kw) => text.indexOf(kw) !== -1) ? 'High' : 'Normal';
+}
+
 // Public, unauthenticated ticket submission — the whole point is that anyone
 // outside @jetcityit.com can reach it. Anti-abuse is IP rate limiting (tight:
 // 5/min) plus a honeypot field; real authorization/scoping happens on the
@@ -75,7 +91,7 @@ app.http('ticketsCreate', {
           rowKey: '0',
           kind: 'meta',
           status: 'Open',
-          priority: 'Normal',
+          priority: autoTriagePriority(subject, description),
           name,
           email,
           company,

@@ -41,6 +41,7 @@ function metaToJson(e) {
 
 function messageToJson(e) {
   return {
+    kind: e.kind, // 'message' or 'note' -- staff-only endpoint, so notes are included and the frontend distinguishes them
     authorType: e.authorType,
     authorName: e.authorName,
     authorUpn: e.authorUpn || '',
@@ -172,6 +173,24 @@ app.http('ticketUpdate', {
         }
       }
 
+      // A bare status change (no reply text) previously notified nobody --
+      // only a reply's own email happened to carry the news. Client only,
+      // since a status change made via a client's own reply goes through a
+      // different code path (clientTicketReply) that doesn't hit this route.
+      if (update.status && update.status !== meta.status && meta.email) {
+        try {
+          const clientToken = await getOrCreateClientToken(meta.email);
+          const link = buildTrackingLink(meta.email, clientToken, ticketId);
+          const html = `<p>Hi ${escapeHtml(meta.name)},</p>
+<p>Your ticket status was updated to <strong>${escapeHtml(update.status)}</strong>.</p>
+<p><a href="${escapeHtml(link)}">View this ticket online</a></p>
+<p>— Jet City IT Help Desk<br/>Ticket ${escapeHtml(ticketId)}</p>`;
+          await sendMail({ from: SUPPORT_MAILBOX, to: meta.email, subject: `Status updated: ${meta.subject} [${ticketId}]`, html });
+        } catch (e) {
+          context.log('STATUS_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+        }
+      }
+
       return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);
@@ -262,6 +281,54 @@ app.http('ticketReply', {
         }
       }
 
+      return { status: 201, jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// Adds a staff-only internal note to a ticket's thread. Deliberately separate
+// from ticketReply: no client email, no client-facing visibility at all (see
+// clientPortal.js's clientTicketGet, which explicitly drops kind !== 'message'
+// rows), and doesn't touch updatedAt -- jotting a note for the team shouldn't
+// make a ticket look "recently worked" to a client-facing status check or
+// reset its aging indicator in the console.
+app.http('ticketNoteAdd', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'tickets/{ticketId}/notes',
+  handler: async (request, context) => {
+    try {
+      const user = await requireStaff(request);
+      const { ticketId } = request.params;
+      const body = await request.json().catch(() => ({}));
+      const text = String(body.body || '').trim().slice(0, 5000);
+      if (!text) throw new AuthError(400, 'Note body is required');
+
+      await ensureTable();
+      const table = getClient();
+
+      try {
+        await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+
+      await table.createEntity({
+        partitionKey: ticketId,
+        rowKey: genMessageRowKey(),
+        kind: 'note',
+        authorType: 'staff',
+        authorName: user.name,
+        authorUpn: user.upn,
+        body: text,
+        attachmentsJson: '',
+        createdAt: new Date().toISOString(),
+      });
+
+      audit(context, user, 'ticket.note', { ticketId });
       return { status: 201, jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);

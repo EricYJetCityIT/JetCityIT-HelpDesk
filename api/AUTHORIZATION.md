@@ -206,6 +206,30 @@ this) so a busy queue isn't cluttered with tickets nobody needs to act on —
 they're still fully visible under the dedicated "Closed" pill, this only
 changes what "All" means.
 
+## Internal notes
+
+`POST /api/tickets/{id}/notes` (staff-only) adds a `kind: 'note'` row to a
+ticket's thread — visually distinct in the staff console (dashed amber),
+staff-authored only, no attachments, and never emailed to anyone. It does
+not touch `updatedAt`, so jotting a note doesn't reset a ticket's aging
+indicator or make it look like the client was contacted.
+
+Notes ride in the *same* Table Storage partition as real messages, so the
+one thing that matters is that the client-facing read path never surfaces
+them: `clientTicketGet` (`clientPortal.js`) explicitly keeps only
+`kind === 'message'` rows, dropping `'note'` (and anything else unrecognized)
+by default rather than assuming a new kind is safe to show. This is the only
+client-facing endpoint that ever enumerates a ticket's rows — `clientTicketsList`
+only returns ticket metadata, never messages.
+
+## Priority auto-triage
+
+New tickets get an automatic `priority` guess (`autoTriagePriority` in
+`ticketsPublic.js`) from a small keyword list (urgent, outage, down, security
+breach, etc.) in the subject/description, defaulting to `Normal` otherwise.
+This is a best-effort pre-sort, not authoritative — staff can always change
+it by hand, and nothing security-sensitive depends on the result.
+
 ## Email notifications
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a
@@ -215,6 +239,14 @@ Graph** (`api/src/lib/graph.js`), reusing the same App Registration and its
 already-admin-consented application `Mail.Send` permission — no new consent
 grant, just a `MAIL_CLIENT_SECRET` app setting (the same secret value used by
 the crew-calendar app's availability-reminder job).
+
+`ticketUpdate` (`PATCH /api/tickets/{id}`) also emails the client whenever
+`status` actually changes to a new value, not just on a reply — previously a
+bare status change with no reply text notified nobody. This only fires from
+the staff-initiated update path; a client reopening their own ticket via
+`clientTicketReply` doesn't loop back through here, so they don't get a
+redundant "status changed to Open" email for something they just did
+themselves.
 
 The reply itself is saved before the email is attempted, and sending is
 best-effort: a failure is logged (`EMAIL_NOTIFY_FAILED` in the Function's

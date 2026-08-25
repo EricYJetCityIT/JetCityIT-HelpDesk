@@ -162,18 +162,50 @@ fails the request) with a direct link to the ticket —
 ticket immediately instead of the list, rather than dropping the assignee
 onto the console's front page.
 
+## Scheduled background jobs (SLA escalation, recurring tickets, email-in)
+
+Three features need to run on a schedule with no user request to hang off
+of: SLA breach escalation, recurring-ticket creation, and email-in reply
+polling (below). All three were originally built as Azure Functions Timer
+Triggers (`app.timer(...)`) — **which silently never ran**, discovered
+only while testing email-in replies. Azure Static Web Apps' managed
+Functions integration (what this whole `api/` folder deploys as) only
+supports HTTP triggers; Timer Triggers are not invoked at all in this
+hosting model. The fix, rather than standing up a separate "bring your
+own Functions" Azure resource (a new billable App Service/Function App
+plan just for three lightweight polls): all three now run as ordinary
+HTTP endpoints under `/api/internal/*`, and a new GitHub Actions workflow
+(`.github/workflows/scheduled-ticks.yml`) calls each of them every 5
+minutes using GitHub's own cron runner instead of Azure's.
+
+Nobody is signed in when a schedule fires, so these can't use
+`requireStaff`'s JWT flow — and the routes can't be left open either,
+since they trigger real side effects (emails, ticket creation, reopening
+tickets). `requireCronSecret` (`lib/auth.js`) gates all three behind a
+shared secret: one `INTERNAL_CRON_SECRET` app setting on the Static Web
+App, matched against an `X-Cron-Secret` header the GitHub Actions
+workflow sends from a repo secret of the same value. Neither the code nor
+this doc contains the actual value — set independently in both places by
+whoever has access to each.
+
+The recurring-tickets job's own due-check (elapsed time since
+`lastCreatedAt`) is what actually gates ticket creation, so being invoked
+every 5 minutes instead of once a day is harmless — it just no-ops on
+every tick where nothing is due yet, rather than needing its own separate
+schedule.
+
 ## Email-in replies
 
 A client can reply directly to a notification email instead of going
-through `/track.html`. `api/src/functions/emailIngest.js` is a Timer
-Trigger (not an HTTP endpoint -- no new public attack surface) that polls
-the shared `helpdesk@jetcityit.com` Inbox every 5 minutes via Microsoft
-Graph, using a persisted cursor (`receivedDateTime` of the last message
-processed, stored at a reserved `CONFIG` partition row) so each poll only
-looks at what's new. Requires the app registration's already-existing
-app-only Graph credentials plus a `Mail.Read` Application permission
-(admin-consented separately from this feature's rollout -- `Mail.Send`
-alone doesn't grant read access).
+through `/track.html`. `api/src/functions/emailIngest.js` polls the
+shared `helpdesk@jetcityit.com` Inbox via Microsoft Graph (see "Scheduled
+background jobs" above for how it's actually invoked, and why it isn't a
+Timer Trigger), using a persisted cursor (`receivedDateTime` of the last
+message processed, stored at a reserved `CONFIG` partition row) so each
+poll only looks at what's new. Requires the app registration's
+already-existing app-only Graph credentials plus a `Mail.Read`
+Application permission (admin-consented separately from this feature's
+rollout -- `Mail.Send` alone doesn't grant read access).
 
 **Threading a reply to its ticket**: every outbound email this app sends
 already embeds `[HD-YYYYMMDD-XXXX]` in its subject, and mail clients

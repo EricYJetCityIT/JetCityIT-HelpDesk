@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const { checkRateLimit } = require('./ratelimit');
@@ -108,6 +109,36 @@ async function requireStaff(request) {
   return { name: decoded.name || upn, upn };
 }
 
+// Azure Static Web Apps' managed Functions integration only supports HTTP
+// triggers -- confirmed against Microsoft's own docs after building three
+// app.timer(...) functions (SLA escalation, recurring tickets, email
+// ingest) that silently never fired, because Timer Triggers aren't
+// supported in this hosting model at all. Rather than standing up a
+// separate "bring your own Functions" app (a new billable Azure resource
+// with its own hosting plan), those three now run as ordinary HTTP
+// endpoints invoked on a schedule by a GitHub Actions workflow instead of
+// by Azure itself. Nobody is signed in when a schedule fires, so this
+// can't use requireStaff's JWT flow, and the route can't be left open
+// either -- a shared secret (one new INTERNAL_CRON_SECRET app setting,
+// matched against a GitHub Actions repo secret of the same value) is the
+// simplest fit for "only our own scheduled workflow should be able to
+// trigger this."
+const INTERNAL_CRON_SECRET = process.env.INTERNAL_CRON_SECRET || '';
+
+function timingSafeEqual(a, b) {
+  const bufA = crypto.createHash('sha256').update(String(a)).digest();
+  const bufB = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function requireCronSecret(request) {
+  if (!INTERNAL_CRON_SECRET) throw new AuthError(500, 'INTERNAL_CRON_SECRET is not configured');
+  const provided = request.headers.get('x-cron-secret') || '';
+  if (!provided || !timingSafeEqual(provided, INTERNAL_CRON_SECRET)) {
+    throw new AuthError(401, 'Invalid cron secret');
+  }
+}
+
 function authErrorResponse(e, context) {
   if (e instanceof AuthError) {
     if (e.status === 429) {
@@ -126,4 +157,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireStaff, AuthError, authErrorResponse, STAFF_UPNS };
+module.exports = { requireStaff, requireCronSecret, AuthError, authErrorResponse, STAFF_UPNS };

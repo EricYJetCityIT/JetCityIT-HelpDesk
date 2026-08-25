@@ -2,6 +2,7 @@ const { app } = require('@azure/functions');
 const { getClient, ensureTable, recordActivity } = require('../lib/tables');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
+const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 
 // Wall-clock response-time targets by priority -- not business-hours-aware,
 // kept deliberately simple for a small team. staff.html has its own copy of
@@ -15,18 +16,24 @@ function buildStaffTicketLink(ticketId) {
   return `https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}`;
 }
 
-// Runs every 15 minutes. Scans open/unresolved tickets that have never had
-// a staff reply (firstRespondedAt unset -- an internal note or a status
-// change doesn't count) and are past their SLA target for their priority,
-// and sends ONE escalation email per ticket: escalatedAt marks it sent so
-// the same breach is never re-escalated on a later run. Notifies the
-// assignee if the ticket has one, otherwise the shared helpdesk inbox --
-// there's no manager-hierarchy concept at this team size, the goal is just
-// making sure a human sees it, not routing to a specific escalation tier.
-app.timer('slaEscalationCheck', {
-  schedule: '0 */15 * * * *',
-  handler: async (myTimer, context) => {
+// Scans open/unresolved tickets that have never had a staff reply
+// (firstRespondedAt unset -- an internal note or a status change doesn't
+// count) and are past their SLA target for their priority, and sends ONE
+// escalation email per ticket: escalatedAt marks it sent so the same
+// breach is never re-escalated on a later run. Notifies the assignee if
+// the ticket has one, otherwise the shared helpdesk inbox -- there's no
+// manager-hierarchy concept at this team size, the goal is just making
+// sure a human sees it, not routing to a specific escalation tier.
+// Invoked every 15 minutes by a GitHub Actions scheduled workflow (see
+// .github/workflows/scheduled-ticks.yml) rather than an Azure Timer
+// Trigger -- see the comment on requireCronSecret in lib/auth.js for why.
+app.http('slaEscalationCheck', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'internal/sla-escalation-tick',
+  handler: async (request, context) => {
     try {
+      requireCronSecret(request);
       await ensureTable();
       const table = getClient();
 
@@ -59,8 +66,9 @@ app.timer('slaEscalationCheck', {
       }
 
       if (candidates.length) context.log('SLA_ESCALATIONS_SENT ' + JSON.stringify({ count: candidates.length }));
+      return { jsonBody: { ok: true, escalated: candidates.length } };
     } catch (e) {
-      context.error(e);
+      return authErrorResponse(e, context);
     }
   },
 });

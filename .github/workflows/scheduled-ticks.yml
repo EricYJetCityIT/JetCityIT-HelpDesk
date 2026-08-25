@@ -1,0 +1,46 @@
+name: Help Desk scheduled background jobs
+
+# Azure Static Web Apps' managed Functions integration only supports HTTP
+# triggers (confirmed against Microsoft's own docs) -- Timer Triggers are
+# silently never invoked in this hosting model. Rather than standing up a
+# separate "bring your own Functions" Azure resource just to get a working
+# scheduler, these three background jobs (email-in replies, SLA breach
+# escalation, recurring ticket creation) run as ordinary HTTP endpoints
+# instead, and this workflow calls each of them on a schedule using
+# GitHub's own cron runner. Every job is naturally idempotent/safe to call
+# more often than strictly needed (see each function's own comments), so
+# one shared 5-minute schedule for all three is simpler than juggling
+# separate schedules -- the daily recurring-ticket job just no-ops on
+# every tick where nothing is actually due yet.
+#
+# Requires a repo secret INTERNAL_CRON_SECRET, matching the app setting of
+# the same name on the jetcityit-helpdesk Static Web App -- this is what
+# stops a stranger from directly POSTing these endpoints and triggering
+# them outside the schedule.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Email ingest tick
+        continue-on-error: true
+        run: |
+          curl -sf -X POST "https://helpdesk.jetcityit.com/api/internal/email-ingest-tick" \
+            -H "X-Cron-Secret: ${{ secrets.INTERNAL_CRON_SECRET }}"
+
+      - name: SLA escalation tick
+        continue-on-error: true
+        run: |
+          curl -sf -X POST "https://helpdesk.jetcityit.com/api/internal/sla-escalation-tick" \
+            -H "X-Cron-Secret: ${{ secrets.INTERNAL_CRON_SECRET }}"
+
+      - name: Recurring tickets tick
+        continue-on-error: true
+        run: |
+          curl -sf -X POST "https://helpdesk.jetcityit.com/api/internal/recurring-tickets-tick" \
+            -H "X-Cron-Secret: ${{ secrets.INTERNAL_CRON_SECRET }}"

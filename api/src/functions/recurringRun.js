@@ -2,6 +2,7 @@ const { app } = require('@azure/functions');
 const { getClient, ensureTable, genTicketId, genMessageRowKey, recordActivity } = require('../lib/tables');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
+const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 
 const PARTITION = 'RECURRING';
 
@@ -9,18 +10,27 @@ function buildStaffTicketLink(ticketId) {
   return `https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}`;
 }
 
-// Runs once a day. Each active recurring template due for its next run
-// (never created yet, or intervalDays have passed since lastCreatedAt) gets
-// a real ticket auto-created from it, assigned to the template's
-// configured assignee if any (same assignment-notification email as a
-// normal assignment). "Requester" on these tickets is the shared helpdesk
-// mailbox itself -- there's no real external client for internal
-// recurring/maintenance work, so no client-facing confirmation email is
-// sent and no client access token is generated for it.
-app.timer('recurringTicketsRun', {
-  schedule: '0 0 8 * * *',
-  handler: async (myTimer, context) => {
+// Each active recurring template due for its next run (never created yet,
+// or intervalDays have passed since lastCreatedAt) gets a real ticket
+// auto-created from it, assigned to the template's configured assignee if
+// any (same assignment-notification email as a normal assignment).
+// "Requester" on these tickets is the shared helpdesk mailbox itself --
+// there's no real external client for internal recurring/maintenance
+// work, so no client-facing confirmation email is sent and no client
+// access token is generated for it. Invoked once a day by a GitHub
+// Actions scheduled workflow (see .github/workflows/scheduled-ticks.yml)
+// rather than an Azure Timer Trigger -- see the comment on
+// requireCronSecret in lib/auth.js for why. The due-check above (interval
+// since lastCreatedAt) is what actually gates ticket creation, so being
+// invoked more often than once a day by that workflow (it runs every 5
+// minutes and calls this same endpoint) is harmless, not a duplication risk.
+app.http('recurringTicketsRun', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'internal/recurring-tickets-tick',
+  handler: async (request, context) => {
     try {
+      requireCronSecret(request);
       await ensureTable();
       const table = getClient();
 
@@ -102,8 +112,9 @@ app.timer('recurringTicketsRun', {
       }
 
       if (due.length) context.log('RECURRING_TICKETS_CREATED ' + JSON.stringify({ count: due.length }));
+      return { jsonBody: { ok: true, created: due.length } };
     } catch (e) {
-      context.error(e);
+      return authErrorResponse(e, context);
     }
   },
 });

@@ -4,6 +4,7 @@ const { getClient, ensureTable, genMessageRowKey, recordActivity } = require('..
 const { sendMail, SUPPORT_MAILBOX, getInboxMessagesSince } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { normalizeEmail } = require('../lib/clientAccess');
+const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 
 // Reserved partitions, same pattern as CLIENT/CONFIG/RECURRING elsewhere in
 // this table -- neither row kind is 'meta', so neither surfaces in
@@ -37,19 +38,26 @@ const TICKET_ID_RE = /\[(HD-\d{8}-[A-Z0-9]{4})\]/;
 // track.html already uses to nudge a client toward filing a new ticket.
 const STALE_CLOSED_DAYS = 30;
 
-// Polls the shared helpdesk@ mailbox's Inbox every 5 minutes for new
-// messages and threads matching ones into the relevant ticket as a client
-// reply -- lets a client just hit "reply" on a notification email instead
-// of going through the tracking portal. Deliberately a poller, not a Graph
-// webhook subscription: no new public-facing notification endpoint (and
-// the clientState-signature verification / subscription-renewal machinery
-// that would need) for a small team where a few minutes of latency on an
-// email reply is completely unnoticed. Text-only for now -- an attachment
-// on an inbound email reply isn't picked up; the portal still handles that.
-app.timer('emailIngestCheck', {
-  schedule: '0 */5 * * * *',
-  handler: async (myTimer, context) => {
+// Checks the shared helpdesk@ mailbox's Inbox for new messages and threads
+// matching ones into the relevant ticket as a client reply -- lets a
+// client just hit "reply" on a notification email instead of going
+// through the tracking portal. Invoked every 5 minutes by a GitHub
+// Actions scheduled workflow (see .github/workflows/scheduled-ticks.yml)
+// rather than an Azure Timer Trigger -- Azure Static Web Apps' managed
+// Functions integration only supports HTTP triggers (see the comment on
+// requireCronSecret in lib/auth.js for the full story). Deliberately a
+// poll, not a Graph webhook subscription: no clientState-signature
+// verification / subscription-renewal machinery needed for a small team
+// where a few minutes of latency on an email reply is completely
+// unnoticed. Text-only for now -- an attachment on an inbound email reply
+// isn't picked up; the portal still handles that.
+app.http('emailIngestCheck', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'internal/email-ingest-tick',
+  handler: async (request, context) => {
     try {
+      requireCronSecret(request);
       await ensureTable();
       const table = getClient();
 
@@ -120,8 +128,9 @@ app.timer('emailIngestCheck', {
 
       await table.upsertEntity({ partitionKey: CONFIG_PARTITION, rowKey: CURSOR_ROW, kind: 'config', since: safeCursor }, 'Merge');
       if (processedCount) context.log('EMAIL_INGEST_PROCESSED ' + JSON.stringify({ count: processedCount }));
+      return { jsonBody: { ok: true, processedCount } };
     } catch (e) {
-      context.error(e);
+      return authErrorResponse(e, context);
     }
   },
 });

@@ -162,6 +162,96 @@ fails the request) with a direct link to the ticket —
 ticket immediately instead of the list, rather than dropping the assignee
 onto the console's front page.
 
+## Email-in replies
+
+A client can reply directly to a notification email instead of going
+through `/track.html`. `api/src/functions/emailIngest.js` is a Timer
+Trigger (not an HTTP endpoint -- no new public attack surface) that polls
+the shared `helpdesk@jetcityit.com` Inbox every 5 minutes via Microsoft
+Graph, using a persisted cursor (`receivedDateTime` of the last message
+processed, stored at a reserved `CONFIG` partition row) so each poll only
+looks at what's new. Requires the app registration's already-existing
+app-only Graph credentials plus a `Mail.Read` Application permission
+(admin-consented separately from this feature's rollout -- `Mail.Send`
+alone doesn't grant read access).
+
+**Threading a reply to its ticket**: every outbound email this app sends
+already embeds `[HD-YYYYMMDD-XXXX]` in its subject, and mail clients
+preserve the rest of a subject line when prefixing `Re:`/`RE:`/`Fwd:`, so
+matching that bracketed id is enough to find the ticket. The message body
+used is Graph's `uniqueBody` property (requested as plain text via a
+`Prefer: outlook.body-content-type="text"` header) -- this is Graph's own
+"just the new content, quoted history already stripped" field, far more
+reliable than trying to detect "On ... wrote:" boundaries by hand.
+**Text-only for now**: an attachment on an inbound email reply is not
+ingested; the portal still handles that case.
+
+**The trust boundary is the `From:` address**, same as every other
+email-based support system (Zendesk, Freshdesk, etc.) -- the ingest
+handler only appends a message if the sender's address matches the
+ticket's own stored email. Actual spoofing resistance comes from
+SPF/DKIM/DMARC enforcement on the receiving side (Microsoft 365), which
+this code has no visibility into or control over; this check only ensures
+a message that legitimately reached the inbox from someone *other* than
+the ticket's own requester never gets attributed to them.
+
+**A real bug caught and fixed before this shipped, not by review but while
+designing it**: the shared `helpdesk@` mailbox is also where the app sends
+every internal notification about itself (client-reply alerts, SLA
+breach escalations, and -- critically -- the "Assigned" email for a
+recurring ticket, whose synthetic requester email *is* this same shared
+mailbox) — all `from: helpdesk@, to: helpdesk@`, landing right back in the
+same Inbox this poller reads, often with a `[ticketId]` in their own
+subject. Without an explicit guard, the poller would treat the app's own
+notification emails as inbound client replies, reopening the ticket and
+triggering another notification back into the same inbox -- a
+self-sustaining loop. Fixed with a blanket rule at the top of
+`processInboundMessage`: a message whose `From:` is the shared support
+mailbox itself is never treated as a client reply, full stop.
+
+A reply ingested this way reopens the ticket exactly like a portal reply
+does (`clientTicketReply` in `clientPortal.js`) — clearing
+`rating`/`resolvedAt`/`firstRespondedAt`/`escalatedAt` for the same reason
+documented under "Deleting tickets" and "Satisfaction rating" below: each
+answers for one specific episode of the ticket, and a reopen invalidates
+them. **Exception**: a reply landing on a ticket that's been `Closed` for
+more than 30 days is recorded but *not* auto-reopened — subject-line
+matching has no real conversation/thread correlation to fall back on, so a
+client reusing a months-old notification email with unrelated new content
+would otherwise silently reopen and pollute an old, possibly-rated ticket.
+The staff notification for that case is worded differently ("Reply on an
+old closed ticket") and asks a human to review it rather than reading as a
+routine continuation.
+
+**Retry safety**: each poll only advances its cursor past a message once
+that message has been durably handled (ingested or deliberately skipped)
+— a message that throws during processing stops the batch right there, so
+nothing already fetched is ever silently skipped forever just because a
+later message in the same batch happened to succeed. A parallel dedup
+marker (`EMAILDEDUP` partition, keyed by a hash of the Graph message id)
+makes re-walking the same batch on a retry safe — an already-ingested
+message is recognized and skipped rather than creating a duplicate reply,
+a duplicate reopen, and a duplicate staff notification.
+
+**Known residual risk, not fixed in code — needs an Exchange Online admin
+action**: the `Mail.Read` Application permission this feature needed is
+tenant-wide by nature (Microsoft Graph app-only permissions aren't scoped
+to one mailbox by default), and the underlying `MAIL_CLIENT_SECRET` is
+shared with the unrelated crew-calendar app's availability-reminder job.
+Today the *code* only ever calls into the `helpdesk@jetcityit.com`
+mailbox, but the *credential* itself, if it ever leaked, could read any
+mailbox in the tenant. The standard mitigation is an Exchange Online
+**Application Access Policy** scoping this app registration's Graph mail
+access to just `helpdesk@jetcityit.com`:
+```powershell
+New-ApplicationAccessPolicy -AppId <JetCity Availability App's client id> `
+  -PolicyScopeGroupId helpdesk@jetcityit.com -AccessRight RestrictAccess `
+  -Description "Restrict to the help desk shared mailbox only"
+```
+This requires Exchange Online PowerShell (not a portal click), so it
+wasn't done as part of this rollout — recommended as a follow-up hardening
+step, not a blocker (the code's own behavior is unaffected either way).
+
 ## Deleting tickets
 
 `DELETE /api/tickets/{id}` (staff-only, same `requireStaff` gate as everything

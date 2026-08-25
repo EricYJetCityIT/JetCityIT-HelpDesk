@@ -89,4 +89,34 @@ async function getUsersByUpns(upns) {
   );
 }
 
-module.exports = { sendMail, getUsersByUpns, SUPPORT_MAILBOX };
+// Polls the shared support mailbox's Inbox for messages received after a
+// given timestamp -- used by the email-ingest timer to pick up client
+// replies sent directly to a notification email instead of through the
+// tracking portal. `Prefer: outlook.body-content-type="text"` makes Graph
+// return uniqueBody as plain text instead of HTML, sidestepping the need
+// to strip markup ourselves. uniqueBody is Graph's own "just the new
+// content, quoted history already stripped" property -- much more
+// reliable than trying to detect "On ... wrote:" boundaries by hand.
+// `sinceIso` is always our own previously-stored cursor, never
+// user-controlled input, so it's safe to interpolate directly into the
+// OData filter.
+async function getInboxMessagesSince(sinceIso) {
+  const token = await getAppToken();
+  const filter = `receivedDateTime gt ${sinceIso}`;
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(SUPPORT_MAILBOX)}/mailFolders/Inbox/messages` +
+    `?$filter=${encodeURIComponent(filter)}&$orderby=receivedDateTime asc&$select=id,subject,from,receivedDateTime,uniqueBody&$top=50`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Prefer: 'outlook.body-content-type="text"',
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Graph list-messages error ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return data.value || [];
+}
+
+module.exports = { sendMail, getUsersByUpns, getInboxMessagesSince, SUPPORT_MAILBOX };

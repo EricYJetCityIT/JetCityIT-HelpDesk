@@ -104,8 +104,8 @@ a{color:var(--green-dark)}
 .field{margin-bottom:18px}
 .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text2)}
 .field .req{color:var(--red)}
-.field input,.field textarea{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
-.field input:focus,.field textarea:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
+.field input,.field textarea,.field select{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.field input:focus,.field textarea:focus,.field select:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
 .field textarea{resize:vertical;min-height:120px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:560px){.row2{grid-template-columns:1fr}}
@@ -187,9 +187,22 @@ a{color:var(--green-dark)}
             <input type="email" id="f-email" name="email" maxlength="200" required/>
           </div>
         </div>
-        <div class="field">
-          <label for="f-company">Company</label>
-          <input type="text" id="f-company" name="company" maxlength="150"/>
+        <div class="row2">
+          <div class="field">
+            <label for="f-company">Company</label>
+            <input type="text" id="f-company" name="company" maxlength="150"/>
+          </div>
+          <div class="field">
+            <label for="f-category">Category</label>
+            <select id="f-category" name="category">
+              <option value="Hardware">Hardware</option>
+              <option value="Software">Software</option>
+              <option value="Network">Network</option>
+              <option value="Account Access">Account Access</option>
+              <option value="Billing">Billing</option>
+              <option value="Other" selected>Other</option>
+            </select>
+          </div>
         </div>
         <div class="field">
           <label for="f-subject">Subject <span class="req">*</span></label>
@@ -356,6 +369,7 @@ form.addEventListener('submit', async function(e){
     name: document.getElementById('f-name').value,
     email: document.getElementById('f-email').value,
     company: document.getElementById('f-company').value,
+    category: document.getElementById('f-category').value,
     subject: document.getElementById('f-subject').value,
     description: document.getElementById('f-description').value,
     website: document.getElementById('f-website').value, // honeypot

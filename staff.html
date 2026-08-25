@@ -154,6 +154,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .msg-staff{background:var(--green-light);align-self:flex-end}
 .msg-note{background:var(--amber-light);border:1px dashed var(--amber);align-self:stretch;max-width:100%}
 .msg-note .msg-head{color:var(--amber)}
+.activity-row{align-self:center;font-size:12px;color:var(--text3);padding:2px 0}
 .msg-head{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:700;margin-bottom:4px}
 .msg-client .msg-head{color:var(--text2)}
 .msg-staff .msg-head{color:var(--green-dark)}
@@ -171,6 +172,18 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .note-send-btn{padding:8px 16px;border:1px solid var(--amber);border-radius:8px;background:var(--surface);color:var(--amber);font-weight:600;font-size:13px}
 .note-send-btn:hover{background:var(--amber);color:#fff}
 .note-send-btn:disabled{opacity:.6}
+
+.time-box{border-top:1px dashed var(--border);margin-top:14px;padding-top:14px}
+.time-box-label{font-size:12px;font-weight:700;color:var(--blue);margin-bottom:8px}
+.time-box-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.time-box-row input{font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text)}
+.time-box-row input[type="number"]{width:90px}
+.time-box-row input[type="text"]{flex:1;min-width:160px}
+.time-send-btn{padding:8px 16px;border:1px solid var(--blue);border-radius:8px;background:var(--surface);color:var(--blue);font-weight:600;font-size:13px}
+.time-send-btn:hover{background:var(--blue);color:#fff}
+.time-send-btn:disabled{opacity:.6}
+.time-row{align-self:center;font-size:12px;color:var(--text3);padding:2px 0}
+.time-row b{color:var(--blue);font-weight:700}
 
 .attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .attachment-thumb{display:block;width:64px;height:64px;border-radius:8px;border:1px solid var(--border);background:var(--bg);overflow:hidden}
@@ -343,6 +356,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div><label>Email</label><div class="val" id="d-email"></div></div>
         <div><label>Company</label><div class="val" id="d-company"></div></div>
         <div><label>Satisfaction</label><div class="val" id="d-rating">—</div></div>
+        <div><label>Time logged</label><div class="val" id="d-time">—</div></div>
       </div>
       <div class="controls-row">
         <div class="ctrl">
@@ -355,6 +369,13 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <label>Priority</label>
           <select id="d-priority">
             <option>Low</option><option>Normal</option><option>High</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label>Category</label>
+          <select id="d-category">
+            <option>Hardware</option><option>Software</option><option>Network</option>
+            <option>Account Access</option><option>Billing</option><option>Other</option>
           </select>
         </div>
         <div class="ctrl">
@@ -384,6 +405,14 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div class="note-box-label">📝 Internal note -- staff only, never sent to the client</div>
         <textarea id="note-body" placeholder="Add a note for the team…"></textarea>
         <button class="note-send-btn" id="note-send-btn" type="button">Add note</button>
+      </div>
+      <div class="time-box">
+        <div class="time-box-label">⏱ Log time</div>
+        <div class="time-box-row">
+          <input type="number" id="time-minutes" min="1" max="1440" placeholder="Minutes"/>
+          <input type="text" id="time-note" placeholder="What did you work on? (optional)"/>
+          <button class="time-send-btn" id="time-send-btn" type="button">Log</button>
+        </div>
       </div>
     </div>
   </div>
@@ -650,7 +679,8 @@ function searchFiltered(tickets){
     return (t.subject || '').toLowerCase().indexOf(q) !== -1 ||
       (t.ticketId || '').toLowerCase().indexOf(q) !== -1 ||
       (t.name || '').toLowerCase().indexOf(q) !== -1 ||
-      (t.email || '').toLowerCase().indexOf(q) !== -1;
+      (t.email || '').toLowerCase().indexOf(q) !== -1 ||
+      (t.category || '').toLowerCase().indexOf(q) !== -1;
   });
 }
 
@@ -889,7 +919,7 @@ document.getElementById('export-btn').addEventListener('click', function(){
   let tickets = statusFiltered();
   if (currentDomainFilter) tickets = tickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; });
   tickets = searchFiltered(tickets);
-  const cols = ['ticketId', 'subject', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'rating', 'createdAt', 'updatedAt'];
+  const cols = ['ticketId', 'subject', 'category', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'rating', 'totalTimeMinutes', 'createdAt', 'updatedAt'];
   const lines = [cols.map(csvCell).join(',')].concat(tickets.map(function(t){
     return cols.map(function(c){
       return csvCell(c === 'assignee' ? (assigneeLabel(t.assignee) || '') : t[c]);
@@ -915,6 +945,15 @@ function relativeTime(iso){
   if (hrs < 24) return hrs + 'h ago';
   const days = Math.round(hrs / 24);
   return days + 'd ago';
+}
+
+function formatMinutes(mins){
+  mins = Number(mins) || 0;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (!h) return m + 'm';
+  if (!m) return h + 'h';
+  return h + 'h ' + m + 'm';
 }
 
 // Same lookup the assignee dropdown's options use, so the list and the
@@ -972,14 +1011,23 @@ async function openTicket(id){
     const ratingEl = document.getElementById('d-rating');
     ratingEl.textContent = t.rating === 'yes' ? '👍 Satisfied' : t.rating === 'no' ? '👎 Not satisfied' : '—';
     ratingEl.title = t.ratedAt ? ('Rated ' + relativeTime(t.ratedAt)) : '';
+    document.getElementById('d-time').textContent = t.totalTimeMinutes ? formatMinutes(t.totalTimeMinutes) : '—';
     document.getElementById('d-status').value = t.status;
     document.getElementById('d-priority').value = t.priority;
+    document.getElementById('d-category').value = t.category || 'Other';
     document.getElementById('d-assignee').value = t.assignee || '';
     document.getElementById('delete-ticket-btn').disabled = false;
     document.getElementById('save-meta-btn').disabled = false;
 
     const thread = document.getElementById('thread');
     thread.innerHTML = (t.messages || []).map(function(m){
+      if (m.kind === 'activity') {
+        return '<div class="activity-row">' + escapeHtml(m.body) + ' · ' + relativeTime(m.createdAt) + '</div>';
+      }
+      if (m.kind === 'time') {
+        return '<div class="time-row">⏱ <b>' + escapeHtml(m.authorName) + '</b> logged ' + formatMinutes(m.minutes) +
+          (m.note ? ' — ' + escapeHtml(m.note) : '') + ' · ' + relativeTime(m.createdAt) + '</div>';
+      }
       if (m.kind === 'note') {
         return '<div class="msg msg-note">' +
           '<div class="msg-head"><span>📝 ' + escapeHtml(m.authorName) + ' (internal note)</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
@@ -1059,6 +1107,7 @@ document.getElementById('save-meta-btn').addEventListener('click', async functio
       body: JSON.stringify({
         status: document.getElementById('d-status').value,
         priority: document.getElementById('d-priority').value,
+        category: document.getElementById('d-category').value,
         assignee: document.getElementById('d-assignee').value,
       }),
     });
@@ -1176,6 +1225,28 @@ document.getElementById('note-send-btn').addEventListener('click', async functio
     await openTicket(currentTicketId);
   } catch (e) {
     alert('Failed to add note: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('time-send-btn').addEventListener('click', async function(){
+  const minutesInput = document.getElementById('time-minutes');
+  const minutes = Number(minutesInput.value);
+  if (!Number.isFinite(minutes) || minutes < 1) { alert('Enter a whole number of minutes.'); return; }
+  const note = document.getElementById('time-note').value.trim();
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/time', {
+      method: 'POST',
+      body: JSON.stringify({ minutes: minutes, note: note }),
+    });
+    minutesInput.value = '';
+    document.getElementById('time-note').value = '';
+    await openTicket(currentTicketId);
+  } catch (e) {
+    alert('Failed to log time: ' + e.message);
   } finally {
     btn.disabled = false;
   }

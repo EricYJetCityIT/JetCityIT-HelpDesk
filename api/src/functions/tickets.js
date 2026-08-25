@@ -1,6 +1,6 @@
 const { app } = require('@azure/functions');
 const { requireStaff, AuthError, authErrorResponse, STAFF_UPNS } = require('../lib/auth');
-const { getClient, ensureTable, genMessageRowKey } = require('../lib/tables');
+const { getClient, ensureTable, genMessageRowKey, TICKET_CATEGORIES, recordActivity } = require('../lib/tables');
 const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
@@ -29,6 +29,7 @@ function metaToJson(e) {
     ticketId: e.partitionKey,
     status: e.status,
     priority: e.priority,
+    category: e.category || 'Other',
     name: e.name,
     email: e.email,
     company: e.company,
@@ -36,6 +37,7 @@ function metaToJson(e) {
     assignee: e.assignee || '',
     rating: e.rating || null,
     ratedAt: e.ratedAt || null,
+    totalTimeMinutes: e.totalTimeMinutes || 0,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -43,11 +45,13 @@ function metaToJson(e) {
 
 function messageToJson(e) {
   return {
-    kind: e.kind, // 'message' or 'note' -- staff-only endpoint, so notes are included and the frontend distinguishes them
+    kind: e.kind, // 'message', 'note', 'activity', or 'time' -- staff-only endpoint, frontend renders each differently
     authorType: e.authorType,
     authorName: e.authorName,
     authorUpn: e.authorUpn || '',
     body: e.body,
+    minutes: e.minutes, // only present on kind: 'time' rows
+    note: e.note, // only present on kind: 'time' rows
     attachments: parseAttachments(e.attachmentsJson),
     createdAt: e.createdAt,
   };
@@ -140,6 +144,7 @@ app.http('ticketUpdate', {
         throw e;
       }
 
+      const previousAssignee = String(meta.assignee || '').trim().toLowerCase();
       const update = { partitionKey: ticketId, rowKey: '0', updatedAt: new Date().toISOString() };
 
       if (body.status !== undefined) {
@@ -159,6 +164,10 @@ app.http('ticketUpdate', {
         if (!PRIORITIES.includes(body.priority)) throw new AuthError(400, 'Invalid priority');
         update.priority = body.priority;
       }
+      if (body.category !== undefined) {
+        if (!TICKET_CATEGORIES.includes(body.category)) throw new AuthError(400, 'Invalid category');
+        update.category = body.category;
+      }
       if (body.assignee !== undefined) {
         const assignee = String(body.assignee || '').trim().toLowerCase();
         // The dropdown only ever offers STAFF_UPNS entries (or blank for
@@ -172,7 +181,21 @@ app.http('ticketUpdate', {
 
       audit(context, user, 'ticket.update', { ticketId, fields: Object.keys(body) });
 
-      const previousAssignee = String(meta.assignee || '').trim().toLowerCase();
+      // Only fields that actually CHANGED, not every field the client sent
+      // -- the console's "Save changes" button always sends status +
+      // priority + category + assignee together, so logging every present
+      // field would spam the trail with no-op entries on every save.
+      const changes = [];
+      if (update.status !== undefined && update.status !== meta.status) changes.push(`status → ${update.status}`);
+      if (update.priority !== undefined && update.priority !== meta.priority) changes.push(`priority → ${update.priority}`);
+      if (update.category !== undefined && update.category !== (meta.category || 'Other')) changes.push(`category → ${update.category}`);
+      if (update.assignee !== undefined && update.assignee !== previousAssignee) {
+        changes.push(`assignee → ${update.assignee || 'Unassigned'}`);
+      }
+      if (changes.length) {
+        await recordActivity(table, ticketId, `${user.name || user.upn} updated ${changes.join(', ')}`);
+      }
+
       if (update.assignee && update.assignee !== previousAssignee) {
         try {
           const html = `<p>You've been assigned a ticket:</p>
@@ -341,6 +364,59 @@ app.http('ticketNoteAdd', {
 
       audit(context, user, 'ticket.note', { ticketId });
       return { status: 201, jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// Logs a chunk of time spent on a ticket. Stored both as its own thread row
+// (kind: 'time', for the visible per-entry log) and denormalized onto the
+// meta row's totalTimeMinutes (so the ticket list / CSV export can show a
+// running total without fetching every ticket's full message thread).
+app.http('ticketTimeAdd', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'tickets/{ticketId}/time',
+  handler: async (request, context) => {
+    try {
+      const user = await requireStaff(request);
+      const { ticketId } = request.params;
+      const body = await request.json().catch(() => ({}));
+
+      const minutes = Math.round(Number(body.minutes));
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 1440) {
+        throw new AuthError(400, 'Minutes must be a whole number between 1 and 1440.');
+      }
+      const note = String(body.note || '').trim().slice(0, 500);
+
+      await ensureTable();
+      const table = getClient();
+
+      let meta;
+      try {
+        meta = await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+
+      await table.createEntity({
+        partitionKey: ticketId,
+        rowKey: genMessageRowKey(),
+        kind: 'time',
+        authorName: user.name,
+        authorUpn: user.upn,
+        minutes,
+        note,
+        createdAt: new Date().toISOString(),
+      });
+
+      const totalTimeMinutes = (meta.totalTimeMinutes || 0) + minutes;
+      await table.updateEntity({ partitionKey: ticketId, rowKey: '0', totalTimeMinutes }, 'Merge');
+
+      audit(context, user, 'ticket.time', { ticketId, minutes });
+      return { status: 201, jsonBody: { ok: true, totalTimeMinutes } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

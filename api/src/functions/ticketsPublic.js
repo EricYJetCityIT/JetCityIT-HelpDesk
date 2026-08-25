@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { getClient, ensureTable, genTicketId, genMessageRowKey } = require('../lib/tables');
+const { getClient, ensureTable, genTicketId, genMessageRowKey, TICKET_CATEGORIES } = require('../lib/tables');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
@@ -67,6 +67,10 @@ app.http('ticketsCreate', {
       const company = String(body.company || '').trim().slice(0, MAX_LEN.company);
       const subject = String(body.subject || '').trim().slice(0, MAX_LEN.subject);
       const description = String(body.description || '').trim().slice(0, MAX_LEN.description);
+      // Not required -- an empty/invalid value just falls back to "Other"
+      // rather than blocking submission over a field that's mainly for
+      // staff-side reporting/routing.
+      const category = TICKET_CATEGORIES.includes(body.category) ? body.category : 'Other';
 
       if (!name || !isValidEmail(email) || !subject || !description) {
         return { status: 400, jsonBody: { error: 'Name, a valid email, subject, and description are required.' } };
@@ -92,6 +96,7 @@ app.http('ticketsCreate', {
           kind: 'meta',
           status: 'Open',
           priority: autoTriagePriority(subject, description),
+          category,
           name,
           email,
           company,

@@ -45,4 +45,32 @@ function genMessageRowKey() {
   return `${String(Date.now())}-${suffix}`;
 }
 
-module.exports = { getClient, ensureTable, TABLE_NAME, genTicketId, genMessageRowKey };
+// Shared between ticketsCreate (client-facing, validates the submitted
+// value) and ticketUpdate (staff-facing, lets a miscategorized ticket be
+// corrected) -- centralized here rather than duplicated so the two can't
+// silently drift out of sync.
+const TICKET_CATEGORIES = ['Hardware', 'Software', 'Network', 'Account Access', 'Billing', 'Other'];
+
+// A staff-only, human-readable audit trail entry (kind: 'activity'), shown
+// in the console alongside the message thread. Deliberately separate from
+// the structured server-log audit() calls (Application Insights, not
+// queryable by staff day-to-day) -- this is the "who changed what, when"
+// staff actually see in the UI. Best-effort and self-swallowing: a missed
+// activity entry is a minor UX gap, never a reason to fail the real
+// mutation it's describing. Client-facing reads (clientTicketGet) only ever
+// surface kind === 'message' rows, so these never reach a client.
+async function recordActivity(table, ticketId, text) {
+  try {
+    await table.createEntity({
+      partitionKey: ticketId,
+      rowKey: genMessageRowKey(),
+      kind: 'activity',
+      body: text,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    // swallow -- see comment above
+  }
+}
+
+module.exports = { getClient, ensureTable, TABLE_NAME, genTicketId, genMessageRowKey, TICKET_CATEGORIES, recordActivity };

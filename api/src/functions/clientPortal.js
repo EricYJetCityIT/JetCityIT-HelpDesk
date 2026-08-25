@@ -28,6 +28,7 @@ function ticketToClientJson(e) {
     ticketId: e.partitionKey,
     status: e.status,
     priority: e.priority,
+    category: e.category || 'Other',
     subject: e.subject,
     rating: e.rating || null,
     createdAt: e.createdAt,

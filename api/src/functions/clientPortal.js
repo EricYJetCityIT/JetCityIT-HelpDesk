@@ -238,11 +238,18 @@ app.http('clientTicketReply', {
         const update = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
         if (meta.status !== 'Open') {
           update.status = 'Open';
-          // A satisfaction rating answers "was THIS resolution good enough"
-          // -- once the ticket reopens, that answer no longer describes the
-          // ticket's current state and must not keep showing as already
-          // answered for whatever gets resolved next.
+          // A rating, a resolution time, a first-response time, and any
+          // past SLA escalation all answer for a SPECIFIC episode of this
+          // ticket -- once it reopens, none of them describe its current
+          // state anymore. Clearing firstRespondedAt/escalatedAt here
+          // matters in particular: without it, a ticket that was ever
+          // responded to (or ever escalated) once would be permanently
+          // invisible to slaEscalation.js's scan even after reopening and
+          // sitting unanswered again.
           if (meta.rating) { update.rating = ''; update.ratedAt = ''; }
+          if (meta.resolvedAt) update.resolvedAt = '';
+          if (meta.firstRespondedAt) update.firstRespondedAt = '';
+          if (meta.escalatedAt) update.escalatedAt = '';
         }
         await table.updateEntity(update, 'Merge');
       } catch (e) {

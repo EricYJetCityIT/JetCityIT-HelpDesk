@@ -210,6 +210,26 @@ async function downloadAttachment(ticketId, attachmentId) {
   }
 }
 
+// Used only by ticket merging -- copies one attachment's bytes to a new
+// blob under a DIFFERENT ticket's prefix (with a freshly generated id, same
+// as any other upload) and returns its new metadata, so a merged message's
+// image keeps working instead of pointing at a blob that's about to be
+// deleted along with the rest of the source ticket. A plain download +
+// re-upload rather than a server-side blob copy -- merges are rare and
+// staff-initiated, not a hot path, and this avoids the SAS-token machinery
+// a same-account copy between two private containers would otherwise need.
+async function copyAttachmentToTicket(sourceTicketId, attachment, destTicketId) {
+  if (!ATTACHMENT_ID_RE.test(attachment.id)) throw new Error('Invalid source attachment id');
+  await ensureContainer();
+  const buffer = await getContainerClient().getBlockBlobClient(`${sourceTicketId}/${attachment.id}`).downloadToBuffer();
+  const ext = attachment.id.slice(attachment.id.lastIndexOf('.') + 1);
+  const id = `${crypto.randomBytes(12).toString('hex')}.${ext}`;
+  await getContainerClient()
+    .getBlockBlobClient(`${destTicketId}/${id}`)
+    .uploadData(buffer, { blobHTTPHeaders: { blobContentType: attachment.contentType } });
+  return { id, fileName: attachment.fileName, contentType: attachment.contentType, size: buffer.length };
+}
+
 function parseAttachments(json) {
   if (!json) return [];
   try {
@@ -225,6 +245,7 @@ module.exports = {
   deleteAttachments,
   deleteAllAttachmentsForTicket,
   downloadAttachment,
+  copyAttachmentToTicket,
   parseAttachments,
   rejectIfTooLarge,
   AttachmentError,

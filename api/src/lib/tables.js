@@ -45,6 +45,15 @@ function genMessageRowKey() {
   return `${String(Date.now())}-${suffix}`;
 }
 
+// Same shape as genMessageRowKey, but keyed off a given timestamp instead
+// of "now" -- used when migrating a row during a ticket merge, so the
+// migrated row keeps sorting into its true original chronological position
+// among the target ticket's rows instead of jumping to "just now".
+function genMessageRowKeyAt(iso) {
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${String(new Date(iso).getTime())}-${suffix}`;
+}
+
 // Shared between ticketsCreate (client-facing, validates the submitted
 // value) and ticketUpdate (staff-facing, lets a miscategorized ticket be
 // corrected) -- centralized here rather than duplicated so the two can't
@@ -73,4 +82,4 @@ async function recordActivity(table, ticketId, text) {
   }
 }
 
-module.exports = { getClient, ensureTable, TABLE_NAME, genTicketId, genMessageRowKey, TICKET_CATEGORIES, recordActivity };
+module.exports = { getClient, ensureTable, TABLE_NAME, genTicketId, genMessageRowKey, genMessageRowKeyAt, TICKET_CATEGORIES, recordActivity };

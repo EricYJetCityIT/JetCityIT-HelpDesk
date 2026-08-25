@@ -1,11 +1,11 @@
 const { app } = require('@azure/functions');
 const { requireStaff, AuthError, authErrorResponse, STAFF_UPNS } = require('../lib/auth');
-const { getClient, ensureTable, genMessageRowKey, TICKET_CATEGORIES, recordActivity } = require('../lib/tables');
+const { getClient, ensureTable, genMessageRowKey, genMessageRowKeyAt, TICKET_CATEGORIES, recordActivity } = require('../lib/tables');
 const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
-const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
+const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
 
 const STATUSES = ['Open', 'Pending', 'Resolved', 'Closed'];
 const PRIORITIES = ['Low', 'Normal', 'High'];
@@ -38,6 +38,9 @@ function metaToJson(e) {
     rating: e.rating || null,
     ratedAt: e.ratedAt || null,
     totalTimeMinutes: e.totalTimeMinutes || 0,
+    firstRespondedAt: e.firstRespondedAt || null,
+    escalatedAt: e.escalatedAt || null,
+    resolvedAt: e.resolvedAt || null,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -150,14 +153,27 @@ app.http('ticketUpdate', {
       if (body.status !== undefined) {
         if (!STATUSES.includes(body.status)) throw new AuthError(400, 'Invalid status');
         update.status = body.status;
-        // Same reasoning as clientTicketReply's auto-reopen: a rating
-        // answers for a specific resolution attempt, so moving a ticket
-        // back to Open/Pending invalidates it. Resolved<->Closed is not a
-        // reopen -- that's just closing the books on the same resolution --
-        // so the rating survives that transition.
-        if (update.status !== 'Resolved' && update.status !== 'Closed' && meta.rating) {
-          update.rating = '';
-          update.ratedAt = '';
+        const isTerminal = update.status === 'Resolved' || update.status === 'Closed';
+        const wasTerminal = meta.status === 'Resolved' || meta.status === 'Closed';
+        if (!isTerminal) {
+          // Same reasoning throughout this block: a rating, a resolution
+          // time, a first-response time, and any past SLA escalation all
+          // answer for a SPECIFIC open/unresolved episode of this ticket,
+          // so moving it back to Open/Pending invalidates them -- without
+          // clearing firstRespondedAt/escalatedAt here, a ticket that was
+          // ever responded to (or ever escalated) once would be
+          // permanently invisible to slaEscalation.js's scan even after
+          // reopening and sitting unanswered again. Resolved<->Closed is
+          // not a reopen -- that's just closing the books on the same
+          // resolution -- so none of this is touched by that transition.
+          if (meta.rating) { update.rating = ''; update.ratedAt = ''; }
+          if (meta.resolvedAt) update.resolvedAt = '';
+          if (meta.firstRespondedAt) update.firstRespondedAt = '';
+          if (meta.escalatedAt) update.escalatedAt = '';
+        } else if (!wasTerminal) {
+          // First time reaching a terminal state for this resolution
+          // attempt -- this is what resolution-time reporting measures.
+          update.resolvedAt = update.updatedAt;
         }
       }
       if (body.priority !== undefined) {
@@ -286,7 +302,12 @@ app.http('ticketReply', {
           attachmentsJson: attachments.length ? JSON.stringify(attachments) : '',
           createdAt: now,
         });
-        await table.updateEntity({ partitionKey: ticketId, rowKey: '0', updatedAt: now }, 'Merge');
+        // First STAFF reply only -- this is the SLA "first response" clock,
+        // and only a real client-visible reply should stop it (an internal
+        // note or a status change doesn't count as responding).
+        const metaUpdate = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
+        if (!meta.firstRespondedAt) metaUpdate.firstRespondedAt = now;
+        await table.updateEntity(metaUpdate, 'Merge');
       } catch (e) {
         await deleteAttachments(ticketId, attachments);
         // The message row above may have been created successfully even
@@ -417,6 +438,177 @@ app.http('ticketTimeAdd', {
 
       audit(context, user, 'ticket.time', { ticketId, minutes });
       return { status: 201, jsonBody: { ok: true, totalTimeMinutes } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// Merges a duplicate ticket into a primary one: every message/note/
+// activity/time row (and their attachment blobs) is copied into the
+// primary's partition with a rowKey that preserves its original
+// chronological position, an activity entry on the primary records the
+// merge, and the duplicate is then permanently deleted -- same full
+// row+blob cleanup as ticketDelete, so nothing is left half-migrated. The
+// primary's own meta (status/priority/assignee/rating/etc.) is left
+// untouched except for its running time total, which absorbs the
+// duplicate's; only the duplicate's THREAD content moves over.
+app.http('ticketMerge', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'tickets/{ticketId}/merge',
+  handler: async (request, context) => {
+    try {
+      const user = await requireStaff(request);
+      const { ticketId: sourceId } = request.params; // the duplicate, merged away
+      const body = await request.json().catch(() => ({}));
+      const targetId = String(body.targetTicketId || '').trim();
+
+      if (!targetId) throw new AuthError(400, 'targetTicketId is required');
+      if (targetId === sourceId) throw new AuthError(400, 'Cannot merge a ticket into itself');
+
+      await ensureTable();
+      const table = getClient();
+
+      // Both tickets must be real (a meta row present) -- same guard as
+      // ticketDelete, for the same reason: reject a crafted id matching a
+      // different reserved partition (CLIENT/CONFIG/RECURRING) before
+      // touching it. This ALSO makes a retried/duplicate merge request
+      // safe: once the source's meta row is gone (see the delete phase
+      // below, which removes it first and separately), a second call for
+      // the same sourceId hits this same check and 404s immediately,
+      // rather than re-running the merge and duplicating everything.
+      let sourceMeta, targetMeta;
+      try {
+        sourceMeta = await table.getEntity(sourceId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket to merge not found' } };
+        throw e;
+      }
+      try {
+        targetMeta = await table.getEntity(targetId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 400, jsonBody: { error: 'Target ticket not found' } };
+        throw e;
+      }
+
+      let anyAttachmentCopyFailed = false;
+
+      // Copies one source row into the target, migrating any attachments
+      // it references. Returns the migrated row's key so the caller can
+      // track which source rows are now safe to delete.
+      async function migrateRow(row) {
+        const newRow = {
+          partitionKey: targetId,
+          rowKey: genMessageRowKeyAt(row.createdAt),
+          kind: row.kind,
+          createdAt: row.createdAt,
+        };
+        if (row.kind === 'message' || row.kind === 'note') {
+          newRow.authorType = row.authorType;
+          newRow.authorName = row.authorName;
+          newRow.authorUpn = row.authorUpn || '';
+          newRow.body = row.body;
+          newRow.attachmentsJson = '';
+          const oldAttachments = parseAttachments(row.attachmentsJson);
+          if (oldAttachments.length) {
+            const newAttachments = [];
+            for (const a of oldAttachments) {
+              try {
+                newAttachments.push(await copyAttachmentToTicket(sourceId, a, targetId));
+              } catch (e2) {
+                // One broken/missing source blob shouldn't block the rest
+                // of the merge -- that image just won't carry over, and
+                // everything else still migrates normally. But it DOES
+                // mean the source's blobs can't be blindly wiped later:
+                // this specific attachment is only safe where it already
+                // is until someone notices and re-attaches it by hand.
+                anyAttachmentCopyFailed = true;
+                context.log('MERGE_ATTACHMENT_COPY_FAILED ' + JSON.stringify({ sourceId, targetId, attachmentId: a.id, error: e2.message }));
+              }
+            }
+            newRow.attachmentsJson = newAttachments.length ? JSON.stringify(newAttachments) : '';
+          }
+        } else if (row.kind === 'time') {
+          newRow.authorName = row.authorName;
+          newRow.authorUpn = row.authorUpn || '';
+          newRow.minutes = row.minutes;
+          newRow.note = row.note || '';
+        } else {
+          // 'activity' and any future kind -- copy just the body text
+          // rather than guessing at a shape this code doesn't know yet.
+          newRow.body = row.body;
+        }
+        await table.createEntity(newRow);
+        return row.rowKey;
+      }
+
+      const migratedRowKeys = [];
+      for await (const e of table.listEntities({ queryOptions: { filter: `PartitionKey eq '${odataEscape(sourceId)}'` } })) {
+        if (e.rowKey === '0') continue; // meta row itself never migrates
+        migratedRowKeys.push(await migrateRow(e));
+      }
+
+      // Attachment copying above is real network I/O and can take seconds
+      // for several images -- re-check for any row written to the source
+      // in that window (a client/staff reply landing mid-merge) so it
+      // gets migrated too instead of silently surviving as an orphan once
+      // the source is deleted below. Bounded to a few passes rather than
+      // looping until quiescent, since an actively-written-to ticket
+      // being merged at the same moment is already an edge case.
+      for (let pass = 0; pass < 3; pass++) {
+        const stragglers = [];
+        for await (const e of table.listEntities({ queryOptions: { filter: `PartitionKey eq '${odataEscape(sourceId)}'` } })) {
+          if (e.rowKey === '0' || migratedRowKeys.includes(e.rowKey)) continue;
+          stragglers.push(e);
+        }
+        if (!stragglers.length) break;
+        for (const row of stragglers) migratedRowKeys.push(await migrateRow(row));
+      }
+
+      const totalTimeMinutes = (targetMeta.totalTimeMinutes || 0) + (sourceMeta.totalTimeMinutes || 0);
+      await table.updateEntity({ partitionKey: targetId, rowKey: '0', updatedAt: new Date().toISOString(), totalTimeMinutes }, 'Merge');
+      await recordActivity(table, targetId, `${user.name || user.upn} merged ticket ${sourceId} ("${sourceMeta.subject}") into this ticket`);
+
+      // Delete the meta row FIRST and separately -- this is what makes a
+      // retried/duplicate merge request safely 404 (see the existence
+      // check above) instead of re-running the whole merge. Any OTHER row
+      // that then fails to delete is just leftover orphaned data in a
+      // partition nobody can reach anymore (ticketGet/clientTicketGet
+      // both require the meta row), the same acceptable trade-off
+      // ticketDelete already makes.
+      // Retried with backoff, not just a single try -- everything above
+      // (row copies, totalTimeMinutes, activity entry) has already
+      // happened, so a single transient failure here forcing a client
+      // retry of the whole merge would re-run all of that a second time.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await table.deleteEntity(sourceId, '0');
+          break;
+        } catch (e) {
+          if (e.statusCode === 404) break;
+          if (attempt === 2) throw e;
+          await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        }
+      }
+      const results = await Promise.allSettled(migratedRowKeys.map((rowKey) => table.deleteEntity(sourceId, rowKey)));
+      // Skip the blob wipe entirely if any attachment failed to copy --
+      // an unmigrated image is only safe where it already is (under the
+      // source's prefix) until someone notices and re-attaches it by
+      // hand. A few orphaned blobs left behind is a storage-hygiene
+      // issue; silently destroying an image nobody has a copy of anymore
+      // is not an acceptable trade for keeping this automatic.
+      if (!anyAttachmentCopyFailed) {
+        await deleteAllAttachmentsForTicket(sourceId);
+      } else {
+        context.log('MERGE_BLOB_CLEANUP_SKIPPED ' + JSON.stringify({ sourceId, targetId }));
+      }
+      const realFailure = results.find((r) => r.status === 'rejected' && r.reason && r.reason.statusCode !== 404);
+
+      audit(context, user, 'ticket.merge', { sourceId, targetId, rowCount: migratedRowKeys.length, partial: !!realFailure || anyAttachmentCopyFailed });
+      if (realFailure) throw realFailure.reason;
+
+      return { jsonBody: { ok: true, targetTicketId: targetId } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

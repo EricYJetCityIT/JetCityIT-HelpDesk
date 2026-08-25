@@ -102,6 +102,8 @@ button{font:inherit;cursor:pointer}
 .filter-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:13px;font-weight:600;color:var(--text2)}
 .filter-btn.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .refresh-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:13px;font-weight:600;color:var(--text2)}
+.recurring-nav-btn{padding:6px 12px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:12px;font-weight:600;color:var(--text2)}
+.recurring-nav-btn:hover{background:var(--bg)}
 
 .table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
 table{width:100%;border-collapse:collapse;font-size:14px}
@@ -136,6 +138,14 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .delete-ticket-btn{flex-shrink:0;padding:7px 12px;border:1px solid var(--red);border-radius:7px;background:var(--surface);color:var(--red);font-size:13px;font-weight:600}
 .delete-ticket-btn:hover{background:var(--red);color:#fff}
 .delete-ticket-btn:disabled{opacity:.5}
+.merge-btn{flex-shrink:0;padding:7px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);font-size:13px;font-weight:600}
+.merge-btn:hover{background:var(--bg)}
+.merge-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--blue-light);border:1px solid var(--blue);border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:13px}
+.merge-row[hidden]{display:none}
+.merge-row select{flex:1;min-width:220px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text)}
+.merge-confirm-btn{padding:7px 14px;border:none;border-radius:7px;background:var(--blue);color:#fff;font-size:13px;font-weight:600}
+.merge-confirm-btn:disabled{opacity:.6}
+.merge-cancel-btn{padding:7px 10px;border:none;background:none;color:var(--text2);font-size:13px;font-weight:600;text-decoration:underline}
 .meta-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px;font-size:13px}
 @media(max-width:640px){.meta-grid{grid-template-columns:1fr 1fr}}
 .meta-grid label{display:block;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
@@ -215,6 +225,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .stat-chip.pending .n{color:var(--amber)}
 .stat-chip.resolved .n{color:var(--green-dark)}
 .stat-chip.closed .n{color:var(--text3)}
+.stat-chip.response .n,.stat-chip.resolution .n{color:var(--green-dark)}
 
 /* ── Toolbar additions: search + export ── */
 .toolbar-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -277,6 +288,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <span class="hdr-console-tag">Staff Console</span>
     </div>
     <div class="hdr-right">
+      <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
         <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
@@ -349,7 +361,15 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <div class="detail-id" id="d-ticket-id"></div>
           <h1 id="d-subject"></h1>
         </div>
-        <button class="delete-ticket-btn" id="delete-ticket-btn" type="button">Delete ticket</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0">
+          <button class="merge-btn" id="merge-btn" type="button">Merge into…</button>
+          <button class="delete-ticket-btn" id="delete-ticket-btn" type="button">Delete ticket</button>
+        </div>
+      </div>
+      <div class="merge-row" id="merge-row" hidden>
+        <select id="merge-target"><option value="">Select the ticket to merge into…</option></select>
+        <button class="merge-confirm-btn" id="merge-confirm-btn" type="button">Merge</button>
+        <button class="merge-cancel-btn" id="merge-cancel-btn" type="button">Cancel</button>
       </div>
       <div class="meta-grid">
         <div><label>Requester</label><div class="val" id="d-name"></div></div>
@@ -357,6 +377,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div><label>Company</label><div class="val" id="d-company"></div></div>
         <div><label>Satisfaction</label><div class="val" id="d-rating">—</div></div>
         <div><label>Time logged</label><div class="val" id="d-time">—</div></div>
+        <div><label>SLA</label><div class="val" id="d-sla">—</div></div>
       </div>
       <div class="controls-row">
         <div class="ctrl">
@@ -413,6 +434,55 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <input type="text" id="time-note" placeholder="What did you work on? (optional)"/>
           <button class="time-send-btn" id="time-send-btn" type="button">Log</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="recurring-view" style="display:none;max-width:820px;margin:0 auto;padding:28px 24px 60px">
+    <button class="back-link" id="recurring-back-btn">← Back to tickets</button>
+    <div class="detail-card">
+      <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:14px">Recurring tickets</h1>
+      <div class="table-card" style="margin-bottom:24px">
+        <table>
+          <thead>
+            <tr><th>Subject</th><th>Category</th><th>Priority</th><th>Assignee</th><th>Every</th><th>Last created</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="recurring-tbody"><tr class="empty-row"><td colspan="8">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">New recurring ticket</h2>
+      <div class="controls-row" style="margin-bottom:10px;align-items:flex-start">
+        <div class="ctrl" style="flex:2;min-width:200px">
+          <label>Subject</label>
+          <input type="text" id="rt-subject" maxlength="200"/>
+        </div>
+        <div class="ctrl">
+          <label>Category</label>
+          <select id="rt-category">
+            <option>Hardware</option><option>Software</option><option>Network</option>
+            <option>Account Access</option><option>Billing</option><option selected>Other</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label>Priority</label>
+          <select id="rt-priority"><option>Low</option><option selected>Normal</option><option>High</option></select>
+        </div>
+      </div>
+      <div class="ctrl" style="margin-bottom:10px">
+        <label>Description</label>
+        <textarea id="rt-description" maxlength="5000" style="width:100%;min-height:70px;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);resize:vertical"></textarea>
+      </div>
+      <div class="controls-row">
+        <div class="ctrl">
+          <label>Assignee</label>
+          <select id="rt-assignee"><option value="">Unassigned</option></select>
+        </div>
+        <div class="ctrl">
+          <label>Every (days)</label>
+          <input type="number" id="rt-interval" min="1" max="365" value="7" style="width:80px"/>
+        </div>
+        <button class="save-meta-btn" id="rt-create-btn" type="button">Add recurring ticket</button>
       </div>
     </div>
   </div>
@@ -610,6 +680,7 @@ async function loadStaffOptions(){
   // can't be confused with each other.
   document.getElementById('bulk-assignee').innerHTML =
     '<option value="">Change assignee…</option><option value="__unassigned__">Unassigned</option>' + optionsHtml;
+  document.getElementById('rt-assignee').innerHTML = '<option value="">Unassigned</option>' + optionsHtml;
 }
 
 async function afterSignIn(){
@@ -645,12 +716,21 @@ async function afterSignIn(){
 function showConsole(){
   document.getElementById('console-view').style.display = 'block';
   document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('recurring-view').style.display = 'none';
 }
 function showDetail(){
   document.getElementById('console-view').style.display = 'none';
   document.getElementById('detail-view').style.display = 'block';
+  document.getElementById('recurring-view').style.display = 'none';
+}
+function showRecurring(){
+  document.getElementById('console-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('recurring-view').style.display = 'block';
 }
 document.getElementById('back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
+document.getElementById('recurring-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
+document.getElementById('recurring-nav-btn').addEventListener('click', function(){ showRecurring(); loadRecurringTemplates(); });
 
 // ── Ticket list ──
 // All tickets are fetched once and both the status pills and the domain
@@ -686,17 +766,51 @@ function searchFiltered(tickets){
 
 // Only Open/Pending tickets can go "stale" -- a Resolved/Closed ticket
 // sitting untouched is normal, not something needing attention.
+// Wall-clock response-time targets by priority -- must match
+// api/src/functions/slaEscalation.js's SLA_MINUTES, which is what actually
+// triggers the escalation email; this copy only drives the badge color.
+const SLA_MINUTES = { High: 120, Normal: 480, Low: 1440 };
+
+// Only Open/Pending tickets that haven't had a staff reply yet can be
+// "aging"/"stale" -- once responded to (or resolved/closed), the SLA clock
+// for a first response has already stopped.
 function ticketAgeClass(t){
   if (t.status !== 'Open' && t.status !== 'Pending') return '';
-  const hrs = (Date.now() - new Date(t.createdAt).getTime()) / 3600000;
-  if (hrs >= 72) return 'stale';
-  if (hrs >= 24) return 'aging';
+  if (t.firstRespondedAt) return '';
+  const slaMin = SLA_MINUTES[t.priority] || SLA_MINUTES.Normal;
+  const elapsedMin = (Date.now() - new Date(t.createdAt).getTime()) / 60000;
+  if (elapsedMin >= slaMin) return 'stale'; // SLA breached
+  if (elapsedMin >= slaMin * 0.75) return 'aging'; // approaching SLA
   return '';
+}
+
+function slaStatusText(t){
+  if (t.firstRespondedAt) {
+    const mins = (new Date(t.firstRespondedAt).getTime() - new Date(t.createdAt).getTime()) / 60000;
+    return '✅ Responded in ' + formatMinutes(Math.max(0, Math.round(mins)));
+  }
+  if (t.status !== 'Open' && t.status !== 'Pending') return '—';
+  const slaMin = SLA_MINUTES[t.priority] || SLA_MINUTES.Normal;
+  const elapsedMin = (Date.now() - new Date(t.createdAt).getTime()) / 60000;
+  if (elapsedMin >= slaMin) return '🔴 SLA breached (' + formatMinutes(Math.round(elapsedMin - slaMin)) + ' over)';
+  return '⏳ Due in ' + formatMinutes(Math.round(slaMin - elapsedMin));
 }
 
 // Shows counts across EVERY status regardless of the active status pill (the
 // point of a dashboard is the full picture), scoped to the selected client
 // when the domain sidebar has one active.
+// Average duration (minutes) between two ISO-timestamp fields, over only
+// the tickets that actually have both -- an unresolved/unresponded ticket
+// simply doesn't contribute a data point rather than skewing the average
+// with a zero or an in-progress duration.
+function avgMinutesBetween(tickets, startField, endField){
+  const durations = tickets
+    .filter(function(t){ return t[startField] && t[endField]; })
+    .map(function(t){ return (new Date(t[endField]).getTime() - new Date(t[startField]).getTime()) / 60000; });
+  if (!durations.length) return null;
+  return durations.reduce(function(a, b){ return a + b; }, 0) / durations.length;
+}
+
 function renderStatsBar(){
   const bar = document.getElementById('stats-bar');
   const base = currentDomainFilter
@@ -705,12 +819,16 @@ function renderStatsBar(){
   const counts = { Open: 0, Pending: 0, Resolved: 0, Closed: 0 };
   base.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(counts, t.status)) counts[t.status]++; });
   const label = currentDomainFilter ? currentDomainFilter : 'All clients';
+  const avgResponse = avgMinutesBetween(base, 'createdAt', 'firstRespondedAt');
+  const avgResolution = avgMinutesBetween(base, 'createdAt', 'resolvedAt');
   bar.innerHTML =
     '<div class="stat-chip total"><div class="n">' + base.length + '</div><div class="l">' + escapeHtml(label) + '</div></div>' +
     '<div class="stat-chip open"><div class="n">' + counts.Open + '</div><div class="l">Open</div></div>' +
     '<div class="stat-chip pending"><div class="n">' + counts.Pending + '</div><div class="l">Pending</div></div>' +
     '<div class="stat-chip resolved"><div class="n">' + counts.Resolved + '</div><div class="l">Resolved</div></div>' +
-    '<div class="stat-chip closed"><div class="n">' + counts.Closed + '</div><div class="l">Closed</div></div>';
+    '<div class="stat-chip closed"><div class="n">' + counts.Closed + '</div><div class="l">Closed</div></div>' +
+    '<div class="stat-chip response"><div class="n">' + (avgResponse != null ? formatMinutes(Math.round(avgResponse)) : '—') + '</div><div class="l">Avg first response</div></div>' +
+    '<div class="stat-chip resolution"><div class="n">' + (avgResolution != null ? formatMinutes(Math.round(avgResolution)) : '—') + '</div><div class="l">Avg resolution</div></div>';
 }
 
 function updateBulkBar(){
@@ -919,7 +1037,7 @@ document.getElementById('export-btn').addEventListener('click', function(){
   let tickets = statusFiltered();
   if (currentDomainFilter) tickets = tickets.filter(function(t){ return emailDomain(t.email) === currentDomainFilter; });
   tickets = searchFiltered(tickets);
-  const cols = ['ticketId', 'subject', 'category', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'rating', 'totalTimeMinutes', 'createdAt', 'updatedAt'];
+  const cols = ['ticketId', 'subject', 'category', 'name', 'email', 'company', 'assignee', 'status', 'priority', 'rating', 'totalTimeMinutes', 'createdAt', 'firstRespondedAt', 'resolvedAt', 'updatedAt'];
   const lines = [cols.map(csvCell).join(',')].concat(tickets.map(function(t){
     return cols.map(function(c){
       return csvCell(c === 'assignee' ? (assigneeLabel(t.assignee) || '') : t[c]);
@@ -1000,6 +1118,7 @@ async function openTicket(id){
   document.getElementById('d-subject').textContent = '';
   document.getElementById('delete-ticket-btn').disabled = true;
   document.getElementById('save-meta-btn').disabled = true;
+  document.getElementById('merge-row').hidden = true; // stale target options would otherwise carry over from whatever ticket was open before
   document.getElementById('thread').innerHTML = 'Loading…';
   try {
     const t = await apiFetch('/tickets/' + encodeURIComponent(id));
@@ -1012,6 +1131,7 @@ async function openTicket(id){
     ratingEl.textContent = t.rating === 'yes' ? '👍 Satisfied' : t.rating === 'no' ? '👎 Not satisfied' : '—';
     ratingEl.title = t.ratedAt ? ('Rated ' + relativeTime(t.ratedAt)) : '';
     document.getElementById('d-time').textContent = t.totalTimeMinutes ? formatMinutes(t.totalTimeMinutes) : '—';
+    document.getElementById('d-sla').textContent = slaStatusText(t);
     document.getElementById('d-status').value = t.status;
     document.getElementById('d-priority').value = t.priority;
     document.getElementById('d-category').value = t.category || 'Other';
@@ -1073,6 +1193,52 @@ function loadAttachmentThumbs(container){
 
 document.getElementById('assign-me-btn').addEventListener('click', function(){
   document.getElementById('d-assignee').value = currentUserUpn;
+});
+
+document.getElementById('merge-btn').addEventListener('click', function(){
+  const row = document.getElementById('merge-row');
+  const wasHidden = row.hidden;
+  row.hidden = false;
+  if (wasHidden) {
+    const sel = document.getElementById('merge-target');
+    const options = allTickets
+      .filter(function(t){ return t.ticketId !== currentTicketId; })
+      .sort(function(a, b){ return a.subject.localeCompare(b.subject); })
+      .map(function(t){ return '<option value="' + escapeHtml(t.ticketId) + '">' + escapeHtml(t.subject) + ' (' + escapeHtml(t.ticketId) + ')</option>'; })
+      .join('');
+    sel.innerHTML = '<option value="">Select the ticket to merge into…</option>' + options;
+  }
+});
+
+document.getElementById('merge-cancel-btn').addEventListener('click', function(){
+  document.getElementById('merge-row').hidden = true;
+});
+
+document.getElementById('merge-confirm-btn').addEventListener('click', async function(){
+  const sel = document.getElementById('merge-target');
+  const targetId = sel.value;
+  if (!targetId) return;
+  const targetTicket = allTickets.filter(function(t){ return t.ticketId === targetId; })[0];
+  const subject = document.getElementById('d-subject').textContent;
+  const confirmed = confirm(
+    'Merge this ticket ("' + subject + '", ' + currentTicketId + ') into "' + (targetTicket ? targetTicket.subject : targetId) + '" (' + targetId + ')?\n\n' +
+    'All messages, notes, and time entries move to that ticket, and this ticket is permanently deleted. This cannot be undone.'
+  );
+  if (!confirmed) return;
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/merge', {
+      method: 'POST',
+      body: JSON.stringify({ targetTicketId: targetId }),
+    });
+    document.getElementById('merge-row').hidden = true;
+    await openTicket(targetId);
+  } catch (e) {
+    alert('Failed to merge: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 document.getElementById('delete-ticket-btn').addEventListener('click', async function(){
@@ -1247,6 +1413,104 @@ document.getElementById('time-send-btn').addEventListener('click', async functio
     await openTicket(currentTicketId);
   } catch (e) {
     alert('Failed to log time: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Recurring tickets ──
+function assigneeOrUnassigned(upn){ return upn ? (assigneeLabel(upn) || upn) : 'Unassigned'; }
+
+async function loadRecurringTemplates(){
+  const tbody = document.getElementById('recurring-tbody');
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="8">Loading…</td></tr>';
+  try {
+    const data = await apiFetch('/recurring');
+    renderRecurringTable(data.templates || []);
+  } catch (e) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">Failed to load: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+function renderRecurringTable(templates){
+  const tbody = document.getElementById('recurring-tbody');
+  if (!templates.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No recurring tickets set up yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = templates.map(function(t){
+    return '<tr data-id="' + escapeHtml(t.id) + '">' +
+      '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
+      '<td class="req-cell">' + escapeHtml(t.category) + '</td>' +
+      '<td class="pri-' + t.priority + '">' + t.priority + '</td>' +
+      '<td class="assignee-cell' + (t.assignee ? '' : ' unassigned') + '">' + escapeHtml(assigneeOrUnassigned(t.assignee)) + '</td>' +
+      '<td class="req-cell">' + t.intervalDays + 'd</td>' +
+      '<td class="updated-cell">' + (t.lastCreatedAt ? relativeTime(t.lastCreatedAt) : 'never') + '</td>' +
+      '<td><span class="badge ' + (t.active ? 'badge-Open' : 'badge-Closed') + '">' + (t.active ? 'Active' : 'Paused') + '</span></td>' +
+      '<td style="white-space:nowrap">' +
+        '<button type="button" class="rt-toggle-btn recurring-nav-btn" data-id="' + escapeHtml(t.id) + '" data-active="' + t.active + '">' + (t.active ? 'Pause' : 'Resume') + '</button> ' +
+        '<button type="button" class="rt-delete-btn recurring-nav-btn" data-id="' + escapeHtml(t.id) + '">Delete</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+document.getElementById('recurring-tbody').addEventListener('click', async function(e){
+  const toggleBtn = e.target.closest('.rt-toggle-btn');
+  const deleteBtn = e.target.closest('.rt-delete-btn');
+  if (toggleBtn) {
+    const id = toggleBtn.dataset.id;
+    const active = toggleBtn.dataset.active === 'true';
+    toggleBtn.disabled = true;
+    try {
+      await apiFetch('/recurring/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ active: !active }) });
+      loadRecurringTemplates();
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
+      toggleBtn.disabled = false;
+    }
+    return;
+  }
+  if (deleteBtn) {
+    const id = deleteBtn.dataset.id;
+    if (!confirm('Delete this recurring ticket template? This does not affect tickets already created from it -- only future ones stop.')) return;
+    deleteBtn.disabled = true;
+    try {
+      await apiFetch('/recurring/' + encodeURIComponent(id), { method: 'DELETE' });
+      loadRecurringTemplates();
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+      deleteBtn.disabled = false;
+    }
+  }
+});
+
+document.getElementById('rt-create-btn').addEventListener('click', async function(){
+  const subject = document.getElementById('rt-subject').value.trim();
+  const description = document.getElementById('rt-description').value.trim();
+  const intervalDays = Number(document.getElementById('rt-interval').value);
+  if (!subject || !description) { alert('Subject and description are required.'); return; }
+  if (!Number.isFinite(intervalDays) || intervalDays < 1) { alert('Enter a whole number of days.'); return; }
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/recurring', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: subject,
+        description: description,
+        category: document.getElementById('rt-category').value,
+        priority: document.getElementById('rt-priority').value,
+        assignee: document.getElementById('rt-assignee').value,
+        intervalDays: intervalDays,
+      }),
+    });
+    document.getElementById('rt-subject').value = '';
+    document.getElementById('rt-description').value = '';
+    document.getElementById('rt-interval').value = '7';
+    loadRecurringTemplates();
+  } catch (e) {
+    alert('Failed to create: ' + e.message);
   } finally {
     btn.disabled = false;
   }

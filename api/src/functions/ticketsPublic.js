@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { getClient, ensureTable, genTicketId, genMessageRowKey, TICKET_CATEGORIES } = require('../lib/tables');
+const { getClient, ensureTable, genTicketId, genMessageRowKey, TICKET_CATEGORIES, recordActivity } = require('../lib/tables');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
@@ -7,6 +7,37 @@ const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
 const { storeAttachments, deleteAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
 const { clientIp } = require('../lib/ip');
+const { STAFF_UPNS } = require('../lib/auth');
+
+// staff.html reads ?ticket= on load and opens that ticket directly instead
+// of the list -- same helper as tickets.js's buildStaffTicketLink, kept as
+// its own tiny copy here rather than a shared export since it's one line.
+function buildStaffTicketLink(ticketId) {
+  return `https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}`;
+}
+
+// Round-robin assignment on new tickets. State lives in a single row under
+// a reserved 'CONFIG' partition -- kind is deliberately not 'meta', so it
+// never surfaces in ticketsList's kind==='meta' filter, and ticketDelete's
+// "must have a real meta row" guard already protects this partition name
+// from the same class of bug that guard was added to fix. Not perfectly
+// race-safe if two tickets are created in the same instant (both could
+// read the same index before either writes back) -- an acceptable fairness
+// blip at this volume, not a correctness issue, so no optimistic-
+// concurrency retry loop here.
+async function pickNextAssignee(table) {
+  if (!STAFF_UPNS.length) return '';
+  let nextIndex = 0;
+  try {
+    const row = await table.getEntity('CONFIG', 'roundRobin');
+    nextIndex = Number(row.nextIndex) || 0;
+  } catch (e) {
+    if (e.statusCode !== 404) throw e;
+  }
+  const assignee = STAFF_UPNS[nextIndex % STAFF_UPNS.length];
+  await table.upsertEntity({ partitionKey: 'CONFIG', rowKey: 'roundRobin', kind: 'config', nextIndex: nextIndex + 1 }, 'Merge');
+  return assignee;
+}
 
 const MAX_LEN = { name: 120, email: 200, company: 150, subject: 200, description: 5000 };
 
@@ -89,6 +120,16 @@ app.http('ticketsCreate', {
         throw e;
       }
 
+      // Best-effort -- a Table Storage hiccup on the round-robin counter
+      // must never block a ticket from being created; it just falls back
+      // to unassigned, same as if auto-assignment didn't exist.
+      let assignee = '';
+      try {
+        assignee = await pickNextAssignee(table);
+      } catch (e) {
+        context.log('AUTO_ASSIGN_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+      }
+
       try {
         await table.createEntity({
           partitionKey: ticketId,
@@ -101,7 +142,7 @@ app.http('ticketsCreate', {
           email,
           company,
           subject,
-          assignee: '',
+          assignee,
           createdAt: now,
           updatedAt: now,
         });
@@ -126,6 +167,30 @@ app.http('ticketsCreate', {
       }
 
       audit(context, null, 'ticket.create', { ticketId, ip });
+
+      if (assignee) {
+        await recordActivity(table, ticketId, `Auto-assigned to ${assignee}`);
+        // This is the one email this PUBLIC, unauthenticated endpoint can
+        // send to a specific real staff mailbox -- the 5/min-per-IP submit
+        // limit doesn't stop a distributed or slow-and-steady flood from
+        // riding the round-robin to spam every staff member in turn. A
+        // per-assignee cap (generous for real usage, well below what
+        // sustained abuse would produce) keeps the notification useful
+        // without becoming an inbox-flooding vector. The assignment and
+        // activity entry above still happen regardless -- only the email
+        // is capped.
+        const notifyLimit = checkRateLimit('assign-notify:' + assignee, 20, 60 * 60 * 1000);
+        if (notifyLimit.allowed) {
+          try {
+            const html = `<p>You've been auto-assigned a new ticket:</p>
+<p><strong>${escapeHtml(subject)}</strong><br/>Ticket ${escapeHtml(ticketId)}</p>
+<p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`;
+            await sendMail({ from: SUPPORT_MAILBOX, to: assignee, subject: `Assigned: ${subject} [${ticketId}]`, html });
+          } catch (e) {
+            context.log('ASSIGN_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+          }
+        }
+      }
 
       try {
         const clientToken = await getOrCreateClientToken(email);

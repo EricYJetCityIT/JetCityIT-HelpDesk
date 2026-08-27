@@ -568,8 +568,10 @@ function extractFromEml(rawText){
   let description = '';
   if (part) {
     let text = part.isHtml ? htmlToText(part.text) : part.text;
-    text = text.replace(/\r\n/g, '\n').replace(/^[ \t]*>[ \t]?/gm, ''); // drop leading '>' quote markers
-    description = stripQuoteMarkers(text).slice(0, 5000);
+    text = text.replace(/\r\n/g, '\n')
+      .replace(/^[ \t]*>[ \t]?/gm, '') // drop leading '>' quote markers
+      .replace(/\[cid:[^\]]*\]/gi, ''); // the plain-text side of an inline image is just this placeholder -- the picture itself is already pulled in as an attachment, so the text version would just be noise
+    description = stripQuoteMarkers(text).replace(/\n{3,}/g, '\n\n').trim().slice(0, 5000);
   }
   const images = [];
   findEmbeddedImages(rawText, images, MAX_FILES);

@@ -520,8 +520,13 @@ function extractFromEml(rawText){
   let description = '';
   if (part) {
     let text = part.isHtml ? htmlToText(part.text) : part.text;
-    text = text.replace(/\r\n/g, '\n').replace(/^[ \t]*>[ \t]?/gm, ''); // drop leading '>' quote markers
-    description = stripQuotedHistory(text).trim().slice(0, 5000);
+    text = text.replace(/\r\n/g, '\n').replace(/^[ \t]*>[ \t]?/gm, '').trim(); // drop leading '>' quote markers
+    const stripped = stripQuotedHistory(text).trim();
+    // A bare forward with nothing typed above it strips down to nothing --
+    // fall back to the full body in that case, since the forwarded content
+    // itself is clearly the substance the sender wants reflected, not noise
+    // to discard.
+    description = (stripped || text).slice(0, 5000);
   }
   return { subject: subject, description: description };
 }

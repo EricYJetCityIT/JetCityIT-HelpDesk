@@ -310,6 +310,26 @@ tbody td{padding:13px 16px;vertical-align:middle}
 
 .chart-tooltip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;font-size:12px;font-weight:600;padding:5px 9px;border-radius:6px;z-index:1000;white-space:nowrap;display:none;transform:translateY(-100%)}
 
+/* Date-range filter -- same dropdown mechanics as .theme-switcher/.theme-menu
+   (open/close/checkmark), just its own instance since it lives in the page
+   body rather than the header. */
+.range-picker{position:relative;margin-bottom:20px;display:inline-block}
+.range-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border);background:var(--surface);border-radius:9px;font-size:13px;font-weight:600;color:var(--text)}
+.range-btn svg:first-child{color:var(--text3)}
+.range-menu{position:absolute;top:calc(100% + 8px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;min-width:210px;z-index:20}
+.range-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:8px 10px;border:none;background:none;border-radius:7px;font-size:13px;font-weight:600;color:var(--text2);text-align:left}
+.range-option:hover{background:var(--bg)}
+.range-option.active{color:var(--text)}
+.range-option.active::after{content:'✓';font-weight:700}
+.range-menu-divider{height:1px;background:var(--border);margin:6px 4px}
+.range-custom{padding:8px 10px 4px}
+.range-custom label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:var(--text3);margin-bottom:8px}
+.range-custom-inputs{display:flex;align-items:center;gap:6px}
+.range-custom-inputs input{font:inherit;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);flex:1;min-width:0;color-scheme:light dark}
+.range-custom-inputs span{color:var(--text3);font-size:12px}
+.range-custom-apply{padding:6px 10px;border:none;border-radius:6px;background:var(--brand);color:#fff;font-size:12px;font-weight:600}
+.range-custom-apply:hover{background:var(--brand-hover)}
+
 /* ── Toolbar additions: search + export ── */
 .toolbar-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .search-input{font:inherit;font-size:13px;padding:7px 12px;border:1px solid var(--border);border-radius:20px;background:var(--surface);color:var(--text);min-width:220px}
@@ -575,8 +595,39 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <button class="back-link" id="analytics-back-btn">← Back to tickets</button>
     <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:18px">Analytics</h1>
 
+    <!-- One filter, above every chart -- scopes all five below it to the
+         same slice of tickets (by createdAt), so the numbers always agree
+         with each other. Mirrors the existing theme-switcher dropdown
+         (same open/close/click-outside/Escape wiring, same checkmark
+         convention) rather than introducing a new pattern. -->
+    <div class="range-picker">
+      <button class="range-btn" id="range-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        <span id="range-btn-label">Last 30 days</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="range-menu" id="range-menu" hidden>
+        <button class="range-option" type="button" data-range="today">Today</button>
+        <button class="range-option" type="button" data-range="7">Last 7 days</button>
+        <button class="range-option active" type="button" data-range="30">Last 30 days</button>
+        <button class="range-option" type="button" data-range="90">Last 90 days</button>
+        <button class="range-option" type="button" data-range="mtd">Month to date</button>
+        <button class="range-option" type="button" data-range="all">All time</button>
+        <div class="range-menu-divider"></div>
+        <div class="range-custom">
+          <label>Custom range</label>
+          <div class="range-custom-inputs">
+            <input type="date" id="range-custom-start" aria-label="Start date"/>
+            <span>–</span>
+            <input type="date" id="range-custom-end" aria-label="End date"/>
+            <button class="range-custom-apply" id="range-custom-apply" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="chart-card">
-      <h2>Tickets created — last 30 days</h2>
+      <h2 id="ts-chart-title">Tickets created — Last 30 days</h2>
       <div class="ts-chart" id="ts-chart"></div>
       <div class="ts-axis" id="ts-axis"></div>
     </div>
@@ -977,6 +1028,49 @@ const CATEGORY_COLORS = {
 const STATUS_COLORS = { Open: 'var(--blue)', Pending: 'var(--amber)', Resolved: 'var(--green-dark)', Closed: 'var(--text3)' };
 const PRIORITY_COLORS = { High: 'var(--red)', Normal: 'var(--text2)', Low: 'var(--series-3)' };
 
+// ── Date range filter -- scopes every chart on the tab (by createdAt) ──
+// key is one of the preset codes below, or 'custom' (start/end then hold
+// the picked Date objects). Presets per the dataviz skill's interaction
+// spec (today/7/30/90/month-to-date); "All time" is this app's own
+// addition since a support team just as often wants the full history.
+let analyticsRange = { key: '30', start: null, end: null };
+const RANGE_LABELS = { today: 'Today', '7': 'Last 7 days', '30': 'Last 30 days', '90': 'Last 90 days', mtd: 'Month to date', all: 'All time' };
+
+function rangeBounds(){
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  switch (analyticsRange.key) {
+    case 'today': return { start: todayStart, end: now };
+    case '7': { const s = new Date(todayStart); s.setDate(s.getDate() - 6); return { start: s, end: now }; }
+    case '90': { const s = new Date(todayStart); s.setDate(s.getDate() - 89); return { start: s, end: now }; }
+    case 'mtd': return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now };
+    case 'custom': return { start: analyticsRange.start, end: analyticsRange.end };
+    case 'all': {
+      if (!allTickets.length) return { start: todayStart, end: now };
+      const min = Math.min.apply(null, allTickets.map(function(t){ return new Date(t.createdAt).getTime(); }));
+      return { start: new Date(min), end: now };
+    }
+    case '30': default: { const s = new Date(todayStart); s.setDate(s.getDate() - 29); return { start: s, end: now }; }
+  }
+}
+
+function rangeLabel(){
+  if (analyticsRange.key === 'custom') {
+    const fmt = function(d){ return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+    return fmt(analyticsRange.start) + ' – ' + fmt(analyticsRange.end);
+  }
+  return RANGE_LABELS[analyticsRange.key] || RANGE_LABELS['30'];
+}
+
+function ticketsInRange(){
+  const b = rangeBounds();
+  return allTickets.filter(function(t){
+    if (!t.createdAt) return false;
+    const d = new Date(t.createdAt).getTime();
+    return d >= b.start.getTime() && d <= b.end.getTime();
+  });
+}
+
 // Generic ranked/breakdown row list: a text label already accompanies every
 // bar, so color is a reinforcing signal, never the only way to tell rows
 // apart. `entries` is [{label, count, color}], already in the order it
@@ -999,32 +1093,37 @@ function renderHBarChart(containerId, entries){
   }).join('');
 }
 
-// A plain flex row of divs is enough at 30 daily buckets -- no SVG/canvas
-// needed at this data size, and it inherits the theme tokens for free.
-function renderTimeSeriesChart(tickets){
-  const days = 30;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+// A plain flex row of divs is enough at this data size -- no SVG/canvas
+// needed, and it inherits the theme tokens for free. Buckets span exactly
+// the active filter range: daily up to 45 days (matches how "Last 30/90
+// days" reads elsewhere in the app), weekly beyond that so a wide custom
+// range or "All time" over a long history doesn't render dozens of
+// hairline-thin bars.
+function renderTimeSeriesChart(tickets, rangeStart, rangeEnd){
+  const msPerDay = 86400000;
+  const start = new Date(rangeStart); start.setHours(0, 0, 0, 0);
+  const totalDays = Math.max(1, Math.round((rangeEnd.getTime() - start.getTime()) / msPerDay) + 1);
+  const bucketDays = totalDays > 45 ? 7 : 1;
   const buckets = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    buckets.push({ date: d, count: 0 });
+  for (let cursor = new Date(start); cursor.getTime() <= rangeEnd.getTime(); cursor.setDate(cursor.getDate() + bucketDays)) {
+    const bStart = new Date(cursor);
+    const bEnd = new Date(Math.min(bStart.getTime() + bucketDays * msPerDay - 1, rangeEnd.getTime()));
+    buckets.push({ start: bStart, end: bEnd, count: 0 });
   }
   tickets.forEach(function(t){
     if (!t.createdAt) return;
-    const d = new Date(t.createdAt);
-    d.setHours(0, 0, 0, 0);
-    const bucket = buckets.find(function(b){ return b.date.getTime() === d.getTime(); });
+    const d = new Date(t.createdAt).getTime();
+    const bucket = buckets.find(function(b){ return d >= b.start.getTime() && d <= b.end.getTime(); });
     if (bucket) bucket.count++;
   });
   const max = Math.max.apply(null, buckets.map(function(b){ return b.count; }).concat([1]));
   const chartEl = document.getElementById('ts-chart');
   const tooltip = document.getElementById('chart-tooltip');
   const fmtDate = function(d){ return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+  const bucketLabel = function(b){ return bucketDays > 1 ? (fmtDate(b.start) + '–' + fmtDate(b.end)) : fmtDate(b.start); };
   chartEl.innerHTML = buckets.map(function(b){
     const h = Math.max(2, Math.round(b.count / max * 130));
-    return '<div class="ts-bar" style="height:' + h + 'px" data-label="' + escapeHtml(fmtDate(b.date)) + '" data-count="' + b.count + '"></div>';
+    return '<div class="ts-bar" style="height:' + h + 'px" data-label="' + escapeHtml(bucketLabel(b)) + '" data-count="' + b.count + '"></div>';
   }).join('');
   Array.prototype.forEach.call(chartEl.querySelectorAll('.ts-bar'), function(bar){
     bar.addEventListener('mouseenter', function(){
@@ -1039,39 +1138,44 @@ function renderTimeSeriesChart(tickets){
     bar.addEventListener('mouseleave', function(){ tooltip.style.display = 'none'; });
   });
   document.getElementById('ts-axis').innerHTML =
-    '<span>' + fmtDate(buckets[0].date) + '</span>' +
-    '<span>' + fmtDate(buckets[Math.floor(buckets.length / 2)].date) + '</span>' +
-    '<span>' + fmtDate(buckets[buckets.length - 1].date) + '</span>';
+    '<span>' + fmtDate(buckets[0].start) + '</span>' +
+    '<span>' + fmtDate(buckets[Math.floor(buckets.length / 2)].start) + '</span>' +
+    '<span>' + fmtDate(buckets[buckets.length - 1].start) + '</span>';
 }
 
 function renderAnalytics(){
-  renderTimeSeriesChart(allTickets);
+  document.getElementById('range-btn-label').textContent = rangeLabel();
+  document.getElementById('ts-chart-title').textContent = 'Tickets created — ' + rangeLabel();
+  const bounds = rangeBounds();
+  const scoped = ticketsInRange();
+
+  renderTimeSeriesChart(scoped, bounds.start, bounds.end);
 
   // Status/priority: fixed workflow/severity order, not sorted by count --
   // the order itself carries meaning (Open precedes Pending precedes
   // Resolved; High precedes Normal precedes Low), unlike category/assignee
   // below where "biggest first" is the more useful read.
   const statusCounts = { Open: 0, Pending: 0, Resolved: 0, Closed: 0 };
-  allTickets.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(statusCounts, t.status)) statusCounts[t.status]++; });
+  scoped.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(statusCounts, t.status)) statusCounts[t.status]++; });
   renderHBarChart('chart-status', Object.keys(statusCounts).map(function(k){
     return { label: k, count: statusCounts[k], color: STATUS_COLORS[k] };
   }));
 
   const priorityCounts = { High: 0, Normal: 0, Low: 0 };
-  allTickets.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(priorityCounts, t.priority)) priorityCounts[t.priority]++; });
+  scoped.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(priorityCounts, t.priority)) priorityCounts[t.priority]++; });
   renderHBarChart('chart-priority', Object.keys(priorityCounts).map(function(k){
     return { label: k, count: priorityCounts[k], color: PRIORITY_COLORS[k] };
   }));
 
   const categoryCounts = {};
   TICKET_CATEGORIES.forEach(function(c){ categoryCounts[c] = 0; });
-  allTickets.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(categoryCounts, t.category)) categoryCounts[t.category]++; });
+  scoped.forEach(function(t){ if (Object.prototype.hasOwnProperty.call(categoryCounts, t.category)) categoryCounts[t.category]++; });
   renderHBarChart('chart-category', TICKET_CATEGORIES
     .map(function(c){ return { label: c, count: categoryCounts[c], color: CATEGORY_COLORS[c] }; })
     .sort(function(a, b){ return b.count - a.count; }));
 
   const assigneeCounts = {};
-  allTickets.forEach(function(t){
+  scoped.forEach(function(t){
     const label = t.assignee ? assigneeLabel(t.assignee) : 'Unassigned';
     assigneeCounts[label] = (assigneeCounts[label] || 0) + 1;
   });
@@ -1081,6 +1185,44 @@ function renderAnalytics(){
     .slice(0, 8); // guard against an unexpectedly large team overflowing the card
   renderHBarChart('chart-assignee', assigneeEntries);
 }
+
+// ── Date range dropdown -- same open/close/checkmark wiring as the
+// header's theme-switcher, just its own instance. ──
+(function(){
+  const rbtn = document.getElementById('range-btn');
+  const rmenu = document.getElementById('range-menu');
+  function closeRangeMenu(){ rmenu.hidden = true; }
+  function highlightActiveRange(){
+    Array.prototype.forEach.call(rmenu.querySelectorAll('.range-option'), function(opt){
+      opt.classList.toggle('active', opt.dataset.range === analyticsRange.key);
+    });
+  }
+  rbtn.addEventListener('click', function(e){ e.stopPropagation(); rmenu.hidden = !rmenu.hidden; });
+  rmenu.addEventListener('click', function(e){
+    const opt = e.target.closest('.range-option');
+    if (!opt) return;
+    analyticsRange = { key: opt.dataset.range, start: null, end: null };
+    highlightActiveRange();
+    closeRangeMenu();
+    renderAnalytics();
+  });
+  document.getElementById('range-custom-apply').addEventListener('click', function(){
+    const s = document.getElementById('range-custom-start').value;
+    const eVal = document.getElementById('range-custom-end').value;
+    if (!s || !eVal) return;
+    const startDate = new Date(s + 'T00:00:00');
+    const endDate = new Date(eVal + 'T23:59:59');
+    if (startDate > endDate) { alert('Start date must be before end date.'); return; }
+    analyticsRange = { key: 'custom', start: startDate, end: endDate };
+    highlightActiveRange();
+    closeRangeMenu();
+    renderAnalytics();
+  });
+  document.addEventListener('click', function(e){
+    if (!rmenu.hidden && !rmenu.contains(e.target) && !rbtn.contains(e.target)) closeRangeMenu();
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeRangeMenu(); });
+})();
 
 function updateBulkBar(){
   const bar = document.getElementById('bulk-bar');

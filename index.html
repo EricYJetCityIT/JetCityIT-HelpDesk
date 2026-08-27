@@ -106,7 +106,7 @@ a{color:var(--green-dark)}
 .field .req{color:var(--red)}
 .field input,.field textarea,.field select{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
 .field input:focus,.field textarea:focus,.field select:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
-.field textarea{resize:vertical;min-height:120px}
+.field textarea{resize:vertical;min-height:220px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:560px){.row2{grid-template-columns:1fr}}
 
@@ -311,13 +311,25 @@ const MAX_EML_BYTES = 20 * 1024 * 1024;
 let selectedFiles = [];
 let selectedEmlFile = null;
 
+// selectedFiles holds two kinds of item so a picture embedded in a
+// forwarded email can sit in the same list, with the same thumbnails, as a
+// manually-chosen screenshot: {kind:'file', file: File} for the picker, or
+// {kind:'extracted', fileName, dataBase64, mimeType, fromEml:true} for an
+// image pulled out of the attached .eml (see findEmbeddedImages below).
+function fileListThumbSrc(item){
+  return item.kind === 'file' ? URL.createObjectURL(item.file) : 'data:' + item.mimeType + ';base64,' + item.dataBase64;
+}
+function fileListName(item){
+  return item.kind === 'file' ? item.file.name : item.fileName;
+}
 function renderFileList(){
   const wrap = document.getElementById('file-list');
-  wrap.innerHTML = selectedFiles.map(function(f, i){
+  wrap.innerHTML = selectedFiles.map(function(item, i){
+    const name = fileListName(item);
     return '<div class="file-chip">' +
-      '<img src="' + URL.createObjectURL(f) + '" alt=""/>' +
-      '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '">×</button>' +
-      '<div class="name">' + escapeHtml(f.name) + '</div>' +
+      '<img src="' + fileListThumbSrc(item) + '" alt=""/>' +
+      '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(name) + '">×</button>' +
+      '<div class="name">' + escapeHtml(name) + '</div>' +
     '</div>';
   }).join('');
 }
@@ -335,7 +347,7 @@ document.getElementById('f-attachments').addEventListener('change', function(e){
       errEl.style.display = 'block';
       continue;
     }
-    selectedFiles.push(f);
+    selectedFiles.push({ kind: 'file', file: f });
   }
   e.target.value = ''; // clear so picking again adds to, rather than replaces, the selection
   renderFileList();
@@ -486,6 +498,39 @@ function findBestBodyPart(rawPart){
   return null;
 }
 
+// Recursively collects every inline image/* leaf part (a screenshot pasted
+// into the body, a photo, a diagram someone forwarded) into `results` as
+// {fileName, dataBase64, mimeType} -- the same shape storeAttachment()
+// already accepts, so these just join the same attachments array as a
+// manually-picked screenshot and get the exact same thumbnail. Stops
+// adding once `results` reaches maxCount; only handles base64-encoded
+// image parts (the overwhelming common case for embedded pictures) and
+// silently skips anything unusual rather than guessing.
+function findEmbeddedImages(rawPart, results, maxCount){
+  if (results.length >= maxCount) return;
+  const parsed = parseEmlHeaders(rawPart);
+  const ct = parseContentType(parsed.headers['content-type']);
+  const content = rawPart.slice(parsed.bodyStart);
+
+  if (ct.type.indexOf('multipart/') === 0 && ct.params.boundary) {
+    const children = splitMultipart(content, ct.params.boundary);
+    for (let i = 0; i < children.length && results.length < maxCount; i++) {
+      findEmbeddedImages(children[i], results, maxCount);
+    }
+    return;
+  }
+  if (ct.type.indexOf('image/') !== 0) return;
+  const cte = (parsed.headers['content-transfer-encoding'] || '').toLowerCase();
+  if (cte !== 'base64') return;
+  const base64 = content.replace(/[\r\n\s]/g, '');
+  if (!base64) return;
+  const disposition = parsed.headers['content-disposition'] || '';
+  const nameMatch = disposition.match(/filename\*?=(?:"([^"]+)"|([^;]+))/i) ||
+    String(parsed.headers['content-type'] || '').match(/name="?([^";]+)"?/i);
+  const fileName = ((nameMatch && (nameMatch[1] || nameMatch[2])) || 'image').trim().slice(0, 150) || 'image';
+  results.push({ fileName: fileName, dataBase64: base64, mimeType: ct.type });
+}
+
 // Not a full HTML parser -- drops style/script blocks, turns block-level
 // tags into newlines, strips whatever tags remain, then decodes entities
 // via a detached (never-inserted, so nothing executes or loads) <div>.
@@ -501,16 +546,19 @@ function htmlToText(html){
   return div.textContent || div.innerText || '';
 }
 
-// Matches the start of a quoted/forwarded block in the VISIBLE body text
-// (as opposed to the real RFC 822 envelope headers, parsed separately) --
-// Outlook's classic reply/forward quoting inserts one of these verbatim.
-// Deliberately requires the whole From/Sent/(To/Cc)/Subject block, not a
-// lone "From:" line, so a genuine message that happens to mention "From:"
-// isn't truncated.
-const QUOTE_BOUNDARY_RE = /^-{2,}\s*(Original Message|Forwarded [Mm]essage)\s*-{2,}\s*$|^From:.*\r?\nSent:.*\r?\n(To:.*\r?\n)?(Cc:.*\r?\n)?Subject:.*$|^On .{0,120} wrote:\s*$/im;
-function stripQuotedHistory(text){
-  const m = QUOTE_BOUNDARY_RE.exec(text);
-  return m ? text.slice(0, m.index).replace(/\s+$/, '') : text;
+// Matches the "From:/Sent:/(To:)/(Cc:)/Subject:" (or "-----Original
+// Message-----" / "-----Forwarded message-----" / "On ... wrote:") block
+// that Outlook and other mail clients insert verbatim into the VISIBLE body
+// text when replying or forwarding (as opposed to the real RFC 822 envelope
+// headers, parsed separately, which never reach the description at all).
+// Matched globally and simply removed, keeping the actual message content
+// on both sides of it -- the goal is to drop the header-line noise, not to
+// truncate the message. Deliberately requires the whole From/Sent/Subject
+// block, not a lone "From:" line, so a genuine message that happens to
+// mention "From:" in a sentence is left alone.
+const QUOTE_MARKER_RE = /^-{2,}\s*(Original Message|Forwarded [Mm]essage)\s*-{2,}\s*$|^From:.*\r?\nSent:.*\r?\n(To:.*\r?\n)?(Cc:.*\r?\n)?Subject:.*$|^On .{0,120} wrote:\s*$/gim;
+function stripQuoteMarkers(text){
+  return text.replace(QUOTE_MARKER_RE, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function extractFromEml(rawText){
@@ -520,15 +568,12 @@ function extractFromEml(rawText){
   let description = '';
   if (part) {
     let text = part.isHtml ? htmlToText(part.text) : part.text;
-    text = text.replace(/\r\n/g, '\n').replace(/^[ \t]*>[ \t]?/gm, '').trim(); // drop leading '>' quote markers
-    const stripped = stripQuotedHistory(text).trim();
-    // A bare forward with nothing typed above it strips down to nothing --
-    // fall back to the full body in that case, since the forwarded content
-    // itself is clearly the substance the sender wants reflected, not noise
-    // to discard.
-    description = (stripped || text).slice(0, 5000);
+    text = text.replace(/\r\n/g, '\n').replace(/^[ \t]*>[ \t]?/gm, ''); // drop leading '>' quote markers
+    description = stripQuoteMarkers(text).slice(0, 5000);
   }
-  return { subject: subject, description: description };
+  const images = [];
+  findEmbeddedImages(rawText, images, MAX_FILES);
+  return { subject: subject, description: description, images: images };
 }
 
 // Best-effort pre-triage, mirroring the server's own autoTriagePriority --
@@ -565,6 +610,16 @@ function prefillFromEml(file){
       const cat = inferCategory(extracted.subject + ' ' + extracted.description);
       if (cat) { catEl.value = cat; filledAny = true; }
     }
+    // Pictures embedded in the email (a screenshot pasted into the body,
+    // a photo) join the same screenshot list and thumbnail as anything
+    // manually picked -- tagged fromEml so removing the .eml also removes
+    // just these, not anything the visitor added themselves.
+    for (let i = 0; i < extracted.images.length && selectedFiles.length < MAX_FILES; i++) {
+      const img = extracted.images[i];
+      selectedFiles.push({ kind: 'extracted', fileName: img.fileName, dataBase64: img.dataBase64, mimeType: img.mimeType, fromEml: true });
+      filledAny = true;
+    }
+    if (extracted.images.length) renderFileList();
     if (filledAny) document.getElementById('eml-prefill-hint').style.display = 'block';
   };
   reader.readAsText(file, 'iso-8859-1');
@@ -587,6 +642,10 @@ document.getElementById('f-eml').addEventListener('change', function(e){
   selectedEmlFile = f;
   renderEmlFileList();
   document.getElementById('eml-prefill-hint').style.display = 'none';
+  // Drop any images pulled from a previously-attached .eml before parsing
+  // the new one, so switching files doesn't leave stale extras behind.
+  selectedFiles = selectedFiles.filter(function(item){ return !item.fromEml; });
+  renderFileList();
   prefillFromEml(f);
 });
 
@@ -595,6 +654,8 @@ document.getElementById('eml-file-list').addEventListener('click', function(e){
   selectedEmlFile = null;
   renderEmlFileList();
   document.getElementById('eml-prefill-hint').style.display = 'none';
+  selectedFiles = selectedFiles.filter(function(item){ return !item.fromEml; });
+  renderFileList();
 });
 
 function fileToBase64(file){
@@ -618,8 +679,9 @@ form.addEventListener('submit', async function(e){
 
   let attachments;
   try {
-    attachments = await Promise.all(selectedFiles.map(async function(f){
-      return { fileName: f.name, dataBase64: await fileToBase64(f) };
+    attachments = await Promise.all(selectedFiles.map(async function(item){
+      if (item.kind === 'extracted') return { fileName: item.fileName, dataBase64: item.dataBase64 };
+      return { fileName: item.file.name, dataBase64: await fileToBase64(item.file) };
     }));
     if (selectedEmlFile) {
       attachments.push({ fileName: selectedEmlFile.name, dataBase64: await fileToBase64(selectedEmlFile) });

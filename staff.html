@@ -314,8 +314,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
    (open/close/checkmark), just its own instance since it lives in the page
    body rather than the header. */
 .range-picker{position:relative;margin-bottom:20px;display:inline-block}
-.range-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border);background:var(--surface);border-radius:9px;font-size:13px;font-weight:600;color:var(--text)}
-.range-btn svg:first-child{color:var(--text3)}
+.range-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--border);background:var(--surface);border-radius:9px;font-size:13px;font-weight:600;color:var(--text);white-space:nowrap}
+.range-btn svg{flex-shrink:0}
+.range-btn svg:first-child{width:14px;height:14px;color:var(--text3)}
 .range-menu{position:absolute;top:calc(100% + 8px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:6px;min-width:210px;z-index:20}
 .range-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:8px 10px;border:none;background:none;border-radius:7px;font-size:13px;font-weight:600;color:var(--text2);text-align:left}
 .range-option:hover{background:var(--bg)}

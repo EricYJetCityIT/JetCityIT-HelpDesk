@@ -198,6 +198,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .attachment-thumb{display:block;width:64px;height:64px;border-radius:8px;border:1px solid var(--border);background:var(--bg);overflow:hidden}
 .attachment-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.attachment-thumb.doc{width:auto;max-width:160px;height:auto;display:flex;align-items:center;gap:6px;padding:6px 8px}
+.attachment-thumb.doc .doc-icon{width:24px;height:24px;border-radius:5px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;flex-shrink:0}
+.attachment-thumb.doc .doc-name{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file-hint{font-size:12px;color:var(--text3);margin:6px 0}
 .file-list{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px}
 .file-chip{position:relative;width:64px}
@@ -1172,6 +1175,11 @@ function attachmentsHtml(ticketId, attachments){
   if (!attachments || !attachments.length) return '';
   return '<div class="attachments">' + attachments.map(function(a){
     const path = '/tickets/' + encodeURIComponent(ticketId) + '/attachments/' + encodeURIComponent(a.id);
+    // A forwarded .eml can't render as an <img> -- show a labeled chip
+    // instead (the server forces it to download rather than open inline).
+    if (/\.eml$/i.test(a.id)) {
+      return '<a class="attachment-thumb doc" data-path="' + escapeHtml(path) + '" href="#" title="' + escapeHtml(a.fileName) + '"><span class="doc-icon">EML</span><span class="doc-name">' + escapeHtml(a.fileName) + '</span></a>';
+    }
     return '<a class="attachment-thumb" data-path="' + escapeHtml(path) + '" href="#" title="' + escapeHtml(a.fileName) + '"><img alt="' + escapeHtml(a.fileName) + '"/></a>';
   }).join('') + '</div>';
 }
@@ -1179,14 +1187,16 @@ function attachmentsHtml(ticketId, attachments){
 // Loads each attachment's bytes (auth'd via the same bearer token as any
 // other API call) and points its thumbnail/link at the resulting blob: URL.
 // Failures are left as broken thumbnails rather than surfaced -- a missing
-// image shouldn't block reading the rest of the thread.
+// image shouldn't block reading the rest of the thread. A .eml chip has no
+// <img> to point at (see attachmentsHtml above), just the href.
 function loadAttachmentThumbs(container){
   Array.prototype.forEach.call(container.querySelectorAll('.attachment-thumb'), function(a){
     apiFetchBlob(a.dataset.path).then(function(blob){
       const url = URL.createObjectURL(blob);
       a.href = url;
       a.target = '_blank';
-      a.querySelector('img').src = url;
+      const img = a.querySelector('img');
+      if (img) img.src = url;
     }).catch(function(){ /* leave as a broken thumbnail */ });
   });
 }

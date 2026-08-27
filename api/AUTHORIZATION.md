@@ -68,13 +68,16 @@ Client-facing responses omit internal fields (`assignee`, staff UPNs) —
 staff messages are attributed simply to "Jet City IT Help Desk", not the
 individual technician.
 
-## Image attachments
+## Image (and .eml) attachments
 
 Clients and staff can both attach up to 4 images (PNG/JPEG/GIF/WEBP, 10 MB
-each, 20 MB combined) to a ticket-creation, staff-reply, or client-reply
-request — sent as base64 in the same JSON body (`attachments: [{fileName,
-dataBase64}]`), not a separate upload call. Storage/validation lives in
-`api/src/lib/attachments.js`.
+each) plus one forwarded Outlook `.eml` file (20 MB), 20 MB combined, to a
+ticket-creation, staff-reply, or client-reply request — sent as base64 in
+the same JSON body (`attachments: [{fileName, dataBase64}]`), not a
+separate upload call. Storage/validation lives in
+`api/src/lib/attachments.js`. The public submission form's "Attach an
+email" field is the .eml entry point; it feeds the same `attachments` array
+as the screenshot picker rather than a separate field.
 
 - **Never trust the client's declared type.** Every upload is classified by
   its actual file-signature bytes (`sniffImageType`), and the *sniffed* type
@@ -82,6 +85,14 @@ dataBase64}]`), not a separate upload call. Storage/validation lives in
   anything else is rejected outright. `image/svg+xml` is deliberately not a
   supported type: an SVG can carry a `<script>`, making it an XSS vector the
   moment it's rendered or linked to.
+- **.eml has no magic-byte signature to sniff**, unlike the image formats —
+  it's just RFC 822 text, so `looksLikeEmlFile` instead checks the first 8KB
+  for a recognizable header block (`From:`/`Subject:`/`Received:`/etc.
+  followed by a blank line). This is a loose, not a strict RFC 822 parse —
+  the real security boundary is that a `.eml` is *never* served back
+  `inline`, only as a forced download (`Content-Disposition: attachment`,
+  via `dispositionFor`), since its body can carry HTML/script unlike a
+  sniffed image.
 - **Blob names are always server-generated** (random 24-hex-char id + a
   whitelisted extension), never derived from the client's filename — the
   filename is kept only as a display label (HTML-escaped on render, length-

@@ -5,7 +5,7 @@ const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
-const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
+const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 
 const STATUSES = ['Open', 'Pending', 'Resolved', 'Closed'];
 const PRIORITIES = ['Low', 'Normal', 'High'];
@@ -692,12 +692,15 @@ app.http('ticketAttachmentGet', {
           'Content-Type': result.contentType,
           'Cache-Control': 'private, max-age=3600',
           // Defense in depth: content type is already always a real image/*
-          // (never attacker-declared, see attachments.js), so this can't
-          // currently be promoted to text/html by sniffing -- but neither
-          // Azure's global security headers nor CSP reach API responses,
-          // so this route sets its own rather than relying on either.
+          // or message/rfc822 (never attacker-declared, see attachments.js),
+          // so this can't currently be promoted to text/html by sniffing --
+          // but neither Azure's global security headers nor CSP reach API
+          // responses, so this route sets its own rather than relying on
+          // either. dispositionFor forces a download (never inline) for
+          // anything that isn't a sniffed image, e.g. a .eml, whose body can
+          // carry HTML/script.
           'X-Content-Type-Options': 'nosniff',
-          'Content-Disposition': `inline; filename="${attachmentId}"`,
+          'Content-Disposition': `${dispositionFor(attachmentId)}; filename="${attachmentId}"`,
         },
         body: result.buffer,
       };

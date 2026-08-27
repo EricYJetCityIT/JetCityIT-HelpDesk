@@ -5,7 +5,8 @@ const CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const CONTAINER_NAME = 'attachments';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per image
-const MAX_FILES_PER_MESSAGE = 4;
+const MAX_EML_BYTES = 20 * 1024 * 1024; // 20 MB per .eml -- a forwarded email can carry its own attachments
+const MAX_FILES_PER_MESSAGE = 5; // up to 4 images plus 1 forwarded email
 const MAX_TOTAL_BYTES_PER_MESSAGE = 20 * 1024 * 1024; // guard against many files each near the per-file cap
 // Headroom over MAX_TOTAL_BYTES_PER_MESSAGE for base64 inflation (~4/3x --
 // 20MB decoded is ~26.7MB of base64) plus the rest of the JSON payload
@@ -18,8 +19,12 @@ const MAX_REQUEST_BODY_BYTES = 28 * 1024 * 1024;
 // image/svg+xml is deliberately not in this list -- an SVG can carry
 // embedded <script>, making it an XSS vector if ever rendered or linked
 // to directly, which is exactly what attachment viewing does.
-const EXT_TO_TYPE = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
-const ATTACHMENT_ID_RE = /^[0-9a-f]{24}\.(png|jpg|gif|webp)$/;
+const EXT_TO_TYPE = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', eml: 'message/rfc822' };
+const ATTACHMENT_ID_RE = /^[0-9a-f]{24}\.(png|jpg|gif|webp|eml)$/;
+// .eml is never served inline (see dispositionFor below) -- unlike an image,
+// its body can contain HTML/script, so it's always forced to download
+// rather than risk a browser attempting to render it.
+const INLINE_EXTS = new Set(['png', 'jpg', 'gif', 'webp']);
 
 let containerClient;
 let ensured;
@@ -95,6 +100,30 @@ function sniffImageType(buf) {
   return null;
 }
 
+// A forwarded Outlook .eml is just an RFC 822 message: a block of header
+// lines (From/To/Subject/Date/...) followed by a blank line, then the body.
+// There's no magic-byte signature to check like the image formats above, so
+// this looks for that header/blank-line shape in the first 8KB instead --
+// loose by design, since the real security boundary is serving it back with
+// a forced download rather than inline (see dispositionFor/INLINE_EXTS
+// above), not a strict RFC 822 parse. Just enough to reject an unrelated
+// file that happens to be renamed to .eml.
+const EML_HEADER_RE = /^(From|To|Cc|Subject|Date|Received|Message-ID|MIME-Version|Content-Type):/im;
+function looksLikeEmlFile(buf) {
+  const head = buf.subarray(0, 8192).toString('utf8');
+  const blankLineIdx = head.search(/\r?\n\r?\n/);
+  const headerBlock = blankLineIdx === -1 ? head : head.slice(0, blankLineIdx);
+  return EML_HEADER_RE.test(headerBlock);
+}
+
+// 'inline' for images (rendered directly in the browser, as today);
+// 'attachment' (forced download) for everything else -- currently just
+// .eml, whose body can carry HTML/script, unlike a sniffed image/*.
+function dispositionFor(attachmentId) {
+  const ext = attachmentId.slice(attachmentId.lastIndexOf('.') + 1).toLowerCase();
+  return INLINE_EXTS.has(ext) ? 'inline' : 'attachment';
+}
+
 // Validates and stores one client-submitted attachment. `raw` is
 // { fileName, dataBase64 }. Returns metadata only -- no raw bytes -- for
 // embedding in the message entity/API response.
@@ -102,16 +131,27 @@ async function storeAttachment(ticketId, raw) {
   const base64 = String((raw && raw.dataBase64) || '');
   // Cheap pre-check before the decode: base64 runs ~4/3 the size of the
   // decoded bytes, so this rejects grossly oversized payloads up front.
-  if (base64.length > MAX_FILE_BYTES * 1.4) {
-    throw new AttachmentError('Each image must be 10 MB or smaller.');
+  // Uses the larger (.eml) cap here since the type isn't known yet -- the
+  // type-specific cap below is what actually enforces the image limit.
+  if (base64.length > MAX_EML_BYTES * 1.4) {
+    throw new AttachmentError('Each attachment must be 20 MB or smaller.');
   }
 
   const buf = Buffer.from(base64, 'base64');
   if (!buf.length) throw new AttachmentError('An attachment was empty.');
-  if (buf.length > MAX_FILE_BYTES) throw new AttachmentError('Each image must be 10 MB or smaller.');
 
-  const sniffed = sniffImageType(buf);
-  if (!sniffed) throw new AttachmentError('Only PNG, JPEG, GIF, or WEBP images are allowed.');
+  // Classified by the actual bytes, never the client-declared type or
+  // filename extension (both attacker-controlled) -- same principle as the
+  // image sniffing this builds on.
+  let sniffed = sniffImageType(buf);
+  if (sniffed) {
+    if (buf.length > MAX_FILE_BYTES) throw new AttachmentError('Each image must be 10 MB or smaller.');
+  } else if (looksLikeEmlFile(buf)) {
+    if (buf.length > MAX_EML_BYTES) throw new AttachmentError('The .eml file must be 20 MB or smaller.');
+    sniffed = { contentType: 'message/rfc822', ext: 'eml' };
+  } else {
+    throw new AttachmentError('Only PNG, JPEG, GIF, WEBP images or an Outlook .eml file are allowed.');
+  }
 
   const id = `${crypto.randomBytes(12).toString('hex')}.${sniffed.ext}`;
   await ensureContainer();
@@ -175,7 +215,7 @@ async function storeAttachments(ticketId, rawList) {
   if (rawList == null) return [];
   if (!Array.isArray(rawList)) throw new AttachmentError('Invalid attachments.');
   if (rawList.length > MAX_FILES_PER_MESSAGE) {
-    throw new AttachmentError(`Attach at most ${MAX_FILES_PER_MESSAGE} images per message.`);
+    throw new AttachmentError(`Attach at most ${MAX_FILES_PER_MESSAGE} files per message.`);
   }
   const approxTotalBytes = rawList.reduce((sum, r) => sum + String((r && r.dataBase64) || '').length * 0.75, 0);
   if (approxTotalBytes > MAX_TOTAL_BYTES_PER_MESSAGE) {
@@ -248,7 +288,9 @@ module.exports = {
   copyAttachmentToTicket,
   parseAttachments,
   rejectIfTooLarge,
+  dispositionFor,
   AttachmentError,
   MAX_FILE_BYTES,
+  MAX_EML_BYTES,
   MAX_FILES_PER_MESSAGE,
 };

@@ -132,6 +132,10 @@ a{color:var(--green-dark)}
 .file-chip img{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;background:var(--bg)}
 .file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+.file-chip.doc{width:auto;max-width:240px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+.file-chip.doc .doc-icon{width:28px;height:28px;border-radius:6px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;letter-spacing:.3px;flex-shrink:0}
+.file-chip.doc .name{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:0}
+.file-chip.doc .remove{position:static;margin-left:auto;flex-shrink:0}
 
 .theme-switcher{position:relative}
 .theme-btn{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer;padding:0}
@@ -212,11 +216,19 @@ a{color:var(--green-dark)}
           <label for="f-description">Describe the issue <span class="req">*</span></label>
           <textarea id="f-description" name="description" maxlength="5000" required></textarea>
         </div>
-        <div class="field">
-          <label for="f-attachments">Attach screenshots (optional)</label>
-          <input type="file" id="f-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-          <div class="file-hint">Up to 4 images, 10 MB each.</div>
-          <div class="file-list" id="file-list"></div>
+        <div class="row2">
+          <div class="field">
+            <label for="f-attachments">Attach screenshots (optional)</label>
+            <input type="file" id="f-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+            <div class="file-hint">Up to 4 images, 10 MB each.</div>
+            <div class="file-list" id="file-list"></div>
+          </div>
+          <div class="field">
+            <label for="f-eml">Attach an email (optional)</label>
+            <input type="file" id="f-eml" accept=".eml,message/rfc822"/>
+            <div class="file-hint">An Outlook .eml file, up to 20 MB.</div>
+            <div class="file-list" id="eml-file-list"></div>
+          </div>
         </div>
         <div class="field hp" aria-hidden="true">
           <label for="f-website">Website</label>
@@ -294,7 +306,9 @@ function escapeHtml(s){
 
 const MAX_FILES = 4;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_EML_BYTES = 20 * 1024 * 1024;
 let selectedFiles = [];
+let selectedEmlFile = null;
 
 function renderFileList(){
   const wrap = document.getElementById('file-list');
@@ -333,6 +347,40 @@ document.getElementById('file-list').addEventListener('click', function(e){
   renderFileList();
 });
 
+function renderEmlFileList(){
+  const wrap = document.getElementById('eml-file-list');
+  if (!selectedEmlFile) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = '<div class="file-chip doc">' +
+    '<div class="doc-icon">EML</div>' +
+    '<div class="name">' + escapeHtml(selectedEmlFile.name) + '</div>' +
+    '<button type="button" class="remove" aria-label="Remove ' + escapeHtml(selectedEmlFile.name) + '">×</button>' +
+  '</div>';
+}
+
+document.getElementById('f-eml').addEventListener('change', function(e){
+  const f = e.target.files[0];
+  e.target.value = ''; // clear so picking again re-fires change even for the same file
+  if (!f) return;
+  if (!/\.eml$/i.test(f.name)) {
+    errEl.textContent = 'Please choose a .eml file exported from Outlook.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (f.size > MAX_EML_BYTES) {
+    errEl.textContent = f.name + ' is larger than 20 MB.';
+    errEl.style.display = 'block';
+    return;
+  }
+  selectedEmlFile = f;
+  renderEmlFileList();
+});
+
+document.getElementById('eml-file-list').addEventListener('click', function(e){
+  if (!e.target.closest('.remove')) return;
+  selectedEmlFile = null;
+  renderEmlFileList();
+});
+
 function fileToBase64(file){
   return new Promise(function(resolve, reject){
     const reader = new FileReader();
@@ -357,6 +405,9 @@ form.addEventListener('submit', async function(e){
     attachments = await Promise.all(selectedFiles.map(async function(f){
       return { fileName: f.name, dataBase64: await fileToBase64(f) };
     }));
+    if (selectedEmlFile) {
+      attachments.push({ fileName: selectedEmlFile.name, dataBase64: await fileToBase64(selectedEmlFile) });
+    }
   } catch (err) {
     errEl.textContent = 'Could not read an attached file. Please try again.';
     errEl.style.display = 'block';
@@ -391,6 +442,7 @@ form.addEventListener('submit', async function(e){
       return;
     }
     selectedFiles = [];
+    selectedEmlFile = null;
     document.getElementById('confirm-ticket-id').textContent = data.ticketId;
     document.getElementById('form-view').style.display = 'none';
     document.getElementById('confirm-view').style.display = 'block';

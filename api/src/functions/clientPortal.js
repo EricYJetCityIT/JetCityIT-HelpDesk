@@ -12,7 +12,7 @@ const {
   buildTrackingLink,
 } = require('../lib/clientAccess');
 const { audit } = require('../lib/audit');
-const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, AttachmentError } = require('../lib/attachments');
+const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { clientIp } = require('../lib/ip');
 
 function isValidEmail(s) {
@@ -382,7 +382,9 @@ app.http('clientAttachmentGet', {
           'Content-Type': result.contentType,
           'Cache-Control': 'private, max-age=3600',
           'X-Content-Type-Options': 'nosniff',
-          'Content-Disposition': `inline; filename="${attachmentId}"`,
+          // Forces a download (never inline) for anything that isn't a
+          // sniffed image, e.g. a .eml, whose body can carry HTML/script.
+          'Content-Disposition': `${dispositionFor(attachmentId)}; filename="${attachmentId}"`,
         },
         body: result.buffer,
       };

@@ -228,6 +228,7 @@ a{color:var(--green-dark)}
             <input type="file" id="f-eml" accept=".eml,message/rfc822"/>
             <div class="file-hint">An Outlook .eml file, up to 20 MB.</div>
             <div class="file-list" id="eml-file-list"></div>
+            <div class="file-hint" id="eml-prefill-hint" style="display:none">Subject, description, and category were filled in from the email — feel free to edit them.</div>
           </div>
         </div>
         <div class="field hp" aria-hidden="true">
@@ -357,6 +358,213 @@ function renderEmlFileList(){
   '</div>';
 }
 
+// ── Best-effort .eml parsing, just to pre-fill the form ─────────────────
+// Reads the raw email source client-side (nothing is uploaded for this --
+// the same file is separately base64'd and sent as an attachment on submit,
+// same as before) and pulls out a Subject and a readable body, so a client
+// forwarding an email doesn't have to retype what it already says. This is
+// a convenience, not a source of truth: it only fills fields the visitor
+// hasn't already touched, and everything it fills stays fully editable.
+// Not a full RFC 822/MIME parser -- handles the shapes Outlook actually
+// produces (single-part or multipart/alternative|mixed|related, quoted-
+// printable/base64 transfer encodings, RFC 2047 encoded-word subjects) and
+// falls back to leaving the form alone on anything it doesn't recognize.
+
+function decodeBase64ToBytes(b64){
+  const bin = atob(String(b64).replace(/[^A-Za-z0-9+/=]/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function decodeBytesAsText(bytes, charset){
+  try { return new TextDecoder(charset || 'utf-8').decode(bytes); }
+  catch (e) { return new TextDecoder('utf-8').decode(bytes); }
+}
+// The raw file is read as Latin-1 (byte-preserving: charCodeAt === the
+// original byte, unlike UTF-8 which can lossily mangle bytes it can't
+// interpret) so this can convert any substring back to its real bytes and
+// decode it with its own declared charset, rather than guessing once for
+// the whole file.
+function latin1StringToBytes(s){
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF;
+  return bytes;
+}
+function decodeQuotedPrintable(s, charset){
+  const joined = String(s).replace(/=\r?\n/g, ''); // soft line breaks
+  const bytes = [];
+  for (let i = 0; i < joined.length; i++) {
+    if (joined[i] === '=' && /^[0-9A-Fa-f]{2}$/.test(joined.substr(i + 1, 2))) {
+      bytes.push(parseInt(joined.substr(i + 1, 2), 16));
+      i += 2;
+    } else {
+      bytes.push(joined.charCodeAt(i) & 0xFF);
+    }
+  }
+  return decodeBytesAsText(new Uint8Array(bytes), charset);
+}
+// RFC 2047 "encoded words" (=?charset?B?...?= / =?charset?Q?...?=), which
+// Outlook uses for any non-ASCII Subject.
+function decodeEncodedWords(s){
+  return String(s || '').replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, function(_, charset, enc, data){
+    try {
+      if (enc.toUpperCase() === 'B') return decodeBytesAsText(decodeBase64ToBytes(data), charset);
+      return decodeQuotedPrintable(data.replace(/_/g, ' '), charset);
+    } catch (e) { return data; }
+  });
+}
+
+// Headers end at the first blank line; a continuation line (starts with
+// space/tab) folds onto the previous header per RFC 822.
+function parseEmlHeaders(text){
+  const idx = text.search(/\r?\n\r?\n/);
+  const headerBlock = idx === -1 ? text : text.slice(0, idx);
+  const sep = idx === -1 ? '' : text.slice(idx).match(/^\r?\n\r?\n/)[0];
+  const bodyStart = idx === -1 ? text.length : idx + sep.length;
+  const lines = [];
+  headerBlock.split(/\r?\n/).forEach(function(line){
+    if (/^[ \t]/.test(line) && lines.length) lines[lines.length - 1] += ' ' + line.trim();
+    else lines.push(line);
+  });
+  const headers = {};
+  lines.forEach(function(line){
+    const m = line.match(/^([^:]+):\s*(.*)$/);
+    if (m) headers[m[1].trim().toLowerCase()] = m[2].trim();
+  });
+  return { headers: headers, bodyStart: bodyStart };
+}
+
+function parseContentType(headerValue){
+  if (!headerValue) return { type: 'text/plain', params: {} };
+  const parts = String(headerValue).split(';');
+  const type = parts.shift().trim().toLowerCase();
+  const params = {};
+  parts.forEach(function(p){
+    const m = p.match(/^\s*([a-zA-Z0-9-]+)\s*=\s*"?([^"]*)"?\s*$/);
+    if (m) params[m[1].toLowerCase()] = m[2];
+  });
+  return { type: type, params: params };
+}
+
+function splitMultipart(body, boundary){
+  const segments = body.split('--' + boundary);
+  if (segments.length < 3) return []; // no real closing boundary -- not actually multipart
+  return segments.slice(1, -1).map(function(seg){
+    return seg.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+  });
+}
+
+// Recursively walks a MIME part looking for the best human-readable body:
+// the first text/plain leaf if one exists anywhere, else the first
+// text/html leaf (tags stripped). Returns null on anything unreadable
+// (an attachment part, a type this doesn't handle) rather than throwing.
+function findBestBodyPart(rawPart){
+  const parsed = parseEmlHeaders(rawPart);
+  const ct = parseContentType(parsed.headers['content-type']);
+  const content = rawPart.slice(parsed.bodyStart);
+
+  if (ct.type.indexOf('multipart/') === 0 && ct.params.boundary) {
+    const children = splitMultipart(content, ct.params.boundary);
+    let plain = null, html = null;
+    for (let i = 0; i < children.length; i++) {
+      const found = findBestBodyPart(children[i]);
+      if (!found) continue;
+      if (found.isHtml) { if (!html) html = found; }
+      else { plain = found; break; } // plain always wins once found
+    }
+    return plain || html;
+  }
+  if (ct.type === 'text/plain' || ct.type === 'text/html') {
+    const cte = (parsed.headers['content-transfer-encoding'] || '7bit').toLowerCase();
+    const charset = ct.params.charset || 'utf-8';
+    let text;
+    if (cte === 'base64') text = decodeBytesAsText(decodeBase64ToBytes(content), charset);
+    else if (cte === 'quoted-printable') text = decodeQuotedPrintable(content, charset);
+    else text = decodeBytesAsText(latin1StringToBytes(content), charset); // 7bit/8bit/binary
+    return { text: text, isHtml: ct.type === 'text/html' };
+  }
+  return null;
+}
+
+// Not a full HTML parser -- drops style/script blocks, turns block-level
+// tags into newlines, strips whatever tags remain, then decodes entities
+// via a detached (never-inserted, so nothing executes or loads) <div>.
+function htmlToText(html){
+  const stripped = String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  const div = document.createElement('div');
+  div.innerHTML = stripped; // safe: div is never attached to the document
+  return div.textContent || div.innerText || '';
+}
+
+// Matches the start of a quoted/forwarded block in the VISIBLE body text
+// (as opposed to the real RFC 822 envelope headers, parsed separately) --
+// Outlook's classic reply/forward quoting inserts one of these verbatim.
+// Deliberately requires the whole From/Sent/(To/Cc)/Subject block, not a
+// lone "From:" line, so a genuine message that happens to mention "From:"
+// isn't truncated.
+const QUOTE_BOUNDARY_RE = /^-{2,}\s*(Original Message|Forwarded [Mm]essage)\s*-{2,}\s*$|^From:.*\r?\nSent:.*\r?\n(To:.*\r?\n)?(Cc:.*\r?\n)?Subject:.*$|^On .{0,120} wrote:\s*$/im;
+function stripQuotedHistory(text){
+  const m = QUOTE_BOUNDARY_RE.exec(text);
+  return m ? text.slice(0, m.index).replace(/\s+$/, '') : text;
+}
+
+function extractFromEml(rawText){
+  const top = parseEmlHeaders(rawText);
+  const subject = decodeEncodedWords(top.headers['subject'] || '').trim().slice(0, 200);
+  const part = findBestBodyPart(rawText);
+  let description = '';
+  if (part) {
+    let text = part.isHtml ? htmlToText(part.text) : part.text;
+    text = text.replace(/\r\n/g, '\n').replace(/^[ \t]*>[ \t]?/gm, ''); // drop leading '>' quote markers
+    description = stripQuotedHistory(text).trim().slice(0, 5000);
+  }
+  return { subject: subject, description: description };
+}
+
+// Best-effort pre-triage, mirroring the server's own autoTriagePriority --
+// never authoritative, staff/the client can always change it by hand.
+const CATEGORY_KEYWORDS = {
+  'Account Access': ['password', 'log in', 'login', 'locked out', 'mfa', '2fa', "can't sign in", 'reset my'],
+  'Network': ['wifi', 'wi-fi', 'vpn', 'network', 'internet', 'connection', 'router', "can't connect"],
+  'Hardware': ['laptop', 'monitor', 'printer', 'keyboard', 'mouse', 'docking station', 'hardware', "won't turn on", "won't power on"],
+  'Software': ['software', 'install', 'update', 'license', 'application', 'outlook', 'excel', 'crashing', 'error message'],
+  'Billing': ['invoice', 'billing', 'charge', 'payment', 'subscription cost'],
+};
+function inferCategory(text){
+  const lower = text.toLowerCase();
+  const cats = Object.keys(CATEGORY_KEYWORDS);
+  for (let i = 0; i < cats.length; i++) {
+    if (CATEGORY_KEYWORDS[cats[i]].some(function(kw){ return lower.indexOf(kw) !== -1; })) return cats[i];
+  }
+  return '';
+}
+
+function prefillFromEml(file){
+  const reader = new FileReader();
+  reader.onload = function(){
+    let extracted;
+    try { extracted = extractFromEml(String(reader.result || '')); }
+    catch (e) { return; } // a parsing quirk should never block the user
+    const subjectEl = document.getElementById('f-subject');
+    const descEl = document.getElementById('f-description');
+    const catEl = document.getElementById('f-category');
+    let filledAny = false;
+    if (extracted.subject && !subjectEl.value.trim()) { subjectEl.value = extracted.subject; filledAny = true; }
+    if (extracted.description && !descEl.value.trim()) { descEl.value = extracted.description; filledAny = true; }
+    if (extracted.description && catEl.value === 'Other') {
+      const cat = inferCategory(extracted.subject + ' ' + extracted.description);
+      if (cat) { catEl.value = cat; filledAny = true; }
+    }
+    if (filledAny) document.getElementById('eml-prefill-hint').style.display = 'block';
+  };
+  reader.readAsText(file, 'iso-8859-1');
+}
+
 document.getElementById('f-eml').addEventListener('change', function(e){
   const f = e.target.files[0];
   e.target.value = ''; // clear so picking again re-fires change even for the same file
@@ -373,12 +581,15 @@ document.getElementById('f-eml').addEventListener('change', function(e){
   }
   selectedEmlFile = f;
   renderEmlFileList();
+  document.getElementById('eml-prefill-hint').style.display = 'none';
+  prefillFromEml(f);
 });
 
 document.getElementById('eml-file-list').addEventListener('click', function(e){
   if (!e.target.closest('.remove')) return;
   selectedEmlFile = null;
   renderEmlFileList();
+  document.getElementById('eml-prefill-hint').style.display = 'none';
 });
 
 function fileToBase64(file){

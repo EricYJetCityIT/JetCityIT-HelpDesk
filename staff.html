@@ -12,9 +12,10 @@
 })();
 </script>
 <title>Staff Console — Jet City IT Help Desk</title>
+<link rel="icon" type="image/png" href="/logo.png"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -86,7 +87,7 @@
   --series-4:#c98500; --series-5:#d55181; --series-6:#008300;
 }
 body{
-  font-family:'Inter',system-ui,sans-serif;
+  font-family:'Public Sans',system-ui,-apple-system,sans-serif;
   color:var(--text);
   min-height:100vh;
   background-color:var(--bg);
@@ -114,7 +115,7 @@ button{font:inherit;cursor:pointer}
 .hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
 .hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-logo img{width:100%;height:100%;object-fit:contain}
-.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
+.hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px}
 .hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px}
 .hdr-right{display:flex;align-items:center;gap:12px}
 .user-badge{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px}
@@ -123,6 +124,7 @@ button{font:inherit;cursor:pointer}
 #ms-login-overlay{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px}
 .login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-md);padding:36px 32px;max-width:380px;width:100%;text-align:center}
 .login-card .hdr-logo{margin:0 auto 16px}
+h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .login-card h1{font-size:18px;margin-bottom:8px}
 .login-card p{color:var(--text2);font-size:13px;margin-bottom:22px;line-height:1.5}
 .ms-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:11px 16px;border:1px solid var(--border);border-radius:9px;background:var(--surface);font-weight:600;font-size:14px}
@@ -184,7 +186,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .detail-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:24px;margin-bottom:20px}
 .detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px;flex-wrap:wrap}
 .detail-head h1{font-size:19px;letter-spacing:-.3px}
-.detail-id{color:var(--text3);font-size:12px;font-weight:600;margin-bottom:4px}
+.detail-id{color:var(--text3);font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;margin-bottom:4px}
 .delete-ticket-btn{flex-shrink:0;padding:7px 12px;border:1px solid var(--red);border-radius:7px;background:var(--surface);color:var(--red);font-size:13px;font-weight:600}
 .delete-ticket-btn:hover{background:var(--red);color:#fff}
 .delete-ticket-btn:disabled{opacity:.5}

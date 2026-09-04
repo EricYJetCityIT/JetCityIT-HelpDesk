@@ -413,6 +413,50 @@ logs) but never fails the reply request. The email carries the full reply
 text plus a tracking-page link (see above), so the requester doesn't have
 to go looking for it separately.
 
+## Asset tracking
+
+Staff-only per-client hardware inventory (`GET/POST /api/assets`,
+`PATCH/DELETE /api/assets/{id}`, all gated by `requireStaff` like every other
+route in this section). Deliberately **no client-facing visibility** —
+extending the client-access-token model to a new resource type isn't
+justified yet for what's currently a staff/back-office feature.
+
+- **Storage**: a separate Table Storage table, `Assets`
+  (`api/src/lib/assetsTable.js`) — not a reserved partition inside `Tickets`
+  — so a crafted/typo'd asset id can never collide with `Tickets`' own
+  reserved partitions (`CLIENT`, `CONFIG`, `RECURRING`, `EMAILDEDUP`).
+  PartitionKey is the client's email domain, lowercased (e.g.
+  `acmecorp.com`) — the same domain string the staff console's ticket
+  sidebar already groups by (`emailDomain()` in `staff.html`) — so listing
+  one client's assets is a normal partition-scoped query.
+- **Fields**: label, client domain, type (`Laptop`/`Desktop`/`Server`/
+  `Printer`/`Network Equipment`/`Mobile Device`/`Other`), status
+  (`Active`/`In Repair`/`Retired`/`Spare`), make, model, serial number,
+  purchase date, warranty expiration, assigned user/location, notes.
+- **Point lookups by id alone** (no domain known yet — e.g. a ticket
+  validating an `assetId`, or the id-only PATCH/DELETE routes) do a
+  cross-partition scan filtered by `RowKey` (`findAssetById`), since RowKey
+  isn't this table's partition key. Same accepted "full scan, fine at this
+  volume" trade-off `ticketsList` already makes on the `Tickets` table.
+- **Moving an asset to a different client** (editing its domain) can't be
+  done as a plain `Merge`/`Replace` — Table Storage can't change a
+  partition key in place — so `assetUpdate` creates the row under the new
+  partition and deletes the old one instead.
+- **Ticket linkage**: an optional `assetId` on the ticket meta row
+  (`tickets.js`), settable via `PATCH /api/tickets/{id}` alongside status/
+  priority/category/assignee. Validated against the `Assets` table (400 if
+  the id doesn't resolve to a real asset); a blank value unlinks. Recorded
+  in the ticket's activity trail like any other field change. Deliberately
+  **not** included in `ticketToClientJson` (`clientPortal.js`'s hand-picked
+  field list) — internal linkage, not client-facing.
+- **Known accepted limitation**: deleting an asset does not touch any
+  ticket that references it — a linked ticket's "Linked asset" field just
+  fails to match any option in the dropdown afterward (shows blank) rather
+  than being actively cleared. Same spirit as this app's other
+  "leftover reference to deleted data" trade-offs (e.g. attachments are
+  never proactively deleted from a ticket's thread either); revisit if this
+  starts causing real confusion.
+
 ## Testing
 
 - **Public**: submit a ticket with no auth → 201 with a `ticketId`. Submit
@@ -458,3 +502,12 @@ to go looking for it separately.
   partition's data. Open a ticket, let its load fail (e.g. throttle the
   network), then click "Delete ticket" → the button is disabled and the
   header is blank rather than showing a stale previous ticket's name.
+- **Assets**: add an asset under a client domain → it appears in the Assets
+  view's table and in the ticket detail's "Linked asset" dropdown. Link a
+  ticket to it via the dropdown, Save → the activity trail shows the asset
+  name, and re-opening the ticket shows it still selected. Edit an asset's
+  domain to a different client → it moves to that client's filter, not
+  duplicated. Delete a linked asset → the ticket's dropdown no longer shows
+  it selected (falls back to blank) rather than erroring. Try
+  `PATCH /api/assets/{id}` or `DELETE /api/assets/{id}` as a signed-in but
+  non-staff account → 403, same as any other staff route.

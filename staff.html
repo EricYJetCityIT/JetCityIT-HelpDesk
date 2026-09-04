@@ -176,6 +176,12 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .badge-Pending{background:var(--amber-light);color:var(--amber)}
 .badge-Resolved{background:var(--green-light);color:var(--green-dark)}
 .badge-Closed{background:var(--bg);color:var(--text3);border:1px solid var(--border)}
+.badge-asset-active{background:var(--green-light);color:var(--green-dark)}
+.badge-asset-in-repair{background:var(--amber-light);color:var(--amber)}
+.badge-asset-retired{background:var(--bg);color:var(--text3);border:1px solid var(--border)}
+.badge-asset-spare{background:var(--blue-light);color:var(--blue)}
+.warranty-soon{color:var(--amber);font-weight:600}
+.warranty-expired{color:var(--red);font-weight:600}
 .pri-High{color:var(--red);font-weight:700}
 .pri-Normal{color:var(--text2)}
 .pri-Low{color:var(--text3)}
@@ -395,6 +401,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     </div>
     <div class="hdr-right">
       <button class="analytics-nav-btn" id="analytics-nav-btn" type="button">📊 Analytics</button>
+      <button class="recurring-nav-btn" id="assets-nav-btn" type="button">🖥️ Assets</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
@@ -512,6 +519,12 @@ tbody td{padding:13px 16px;vertical-align:middle}
             <option value="">Unassigned</option>
           </select>
         </div>
+        <div class="ctrl">
+          <label>Linked asset</label>
+          <select id="d-asset">
+            <option value="">No linked asset</option>
+          </select>
+        </div>
         <button class="assign-me-btn" id="assign-me-btn">Assign to me</button>
         <button class="save-meta-btn" id="save-meta-btn">Save changes</button>
       </div>
@@ -590,6 +603,90 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <input type="number" id="rt-interval" min="1" max="365" value="7" style="width:80px"/>
         </div>
         <button class="save-meta-btn" id="rt-create-btn" type="button">Add recurring ticket</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="assets-view" style="display:none;max-width:1000px;margin:0 auto;padding:28px 24px 60px">
+    <button class="back-link" id="assets-back-btn">← Back to tickets</button>
+    <div class="detail-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+        <h1 style="font-size:19px;letter-spacing:-.3px">Assets</h1>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="assets-domain-filter" style="padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">
+            <option value="">All clients</option>
+          </select>
+          <button class="recurring-nav-btn" id="assets-export-btn" type="button">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-card" style="margin-bottom:24px">
+        <table>
+          <thead>
+            <tr><th>Label</th><th>Type</th><th>Client</th><th>Status</th><th>Warranty</th><th>Assigned to</th><th></th></tr>
+          </thead>
+          <tbody id="assets-tbody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2 style="font-size:14px;font-weight:700;margin-bottom:12px" id="asset-form-title">Add an asset</h2>
+      <div class="controls-row" style="margin-bottom:10px">
+        <div class="ctrl" style="flex:2;min-width:180px">
+          <label>Label</label>
+          <input type="text" id="asset-label" maxlength="200" placeholder="e.g. Front desk laptop"/>
+        </div>
+        <div class="ctrl" style="flex:1;min-width:160px">
+          <label>Client domain</label>
+          <input type="text" id="asset-domain" maxlength="200" placeholder="e.g. acmecorp.com"/>
+        </div>
+        <div class="ctrl">
+          <label>Type</label>
+          <select id="asset-type">
+            <option>Laptop</option><option>Desktop</option><option>Server</option>
+            <option>Printer</option><option>Network Equipment</option><option>Mobile Device</option><option>Other</option>
+          </select>
+        </div>
+        <div class="ctrl">
+          <label>Status</label>
+          <select id="asset-status">
+            <option>Active</option><option>In Repair</option><option>Retired</option><option>Spare</option>
+          </select>
+        </div>
+      </div>
+      <div class="controls-row" style="margin-bottom:10px">
+        <div class="ctrl" style="min-width:140px">
+          <label>Make</label>
+          <input type="text" id="asset-make" maxlength="200"/>
+        </div>
+        <div class="ctrl" style="min-width:140px">
+          <label>Model</label>
+          <input type="text" id="asset-model" maxlength="200"/>
+        </div>
+        <div class="ctrl" style="min-width:160px">
+          <label>Serial number</label>
+          <input type="text" id="asset-serial" maxlength="200"/>
+        </div>
+        <div class="ctrl" style="min-width:160px">
+          <label>Assigned to</label>
+          <input type="text" id="asset-assigned-to" maxlength="200" placeholder="Person or location"/>
+        </div>
+      </div>
+      <div class="controls-row" style="margin-bottom:10px">
+        <div class="ctrl">
+          <label>Purchase date</label>
+          <input type="date" id="asset-purchase-date"/>
+        </div>
+        <div class="ctrl">
+          <label>Warranty expiration</label>
+          <input type="date" id="asset-warranty-date"/>
+        </div>
+      </div>
+      <div class="ctrl" style="margin-bottom:10px">
+        <label>Notes</label>
+        <textarea id="asset-notes" maxlength="2000" style="width:100%;min-height:60px;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);resize:vertical"></textarea>
+      </div>
+      <div class="controls-row">
+        <button class="save-meta-btn" id="asset-save-btn" type="button">Add asset</button>
+        <button class="merge-btn" id="asset-cancel-edit-btn" type="button" hidden>Cancel edit</button>
       </div>
     </div>
   </div>
@@ -867,7 +964,9 @@ async function afterSignIn(){
     // Options need to exist before openTicket() sets the select's value,
     // otherwise setting .value to a UPN with no matching <option> yet
     // silently falls back to blank instead of showing the real assignee.
+    // Same reasoning applies to the linked-asset select below.
     await loadStaffOptions();
+    await loadAssets();
     const deepLinkTicket = new URLSearchParams(location.search).get('ticket');
     if (deepLinkTicket) {
       openTicket(deepLinkTicket);
@@ -882,38 +981,27 @@ async function afterSignIn(){
 }
 
 // ── View switching ──
-function showConsole(){
-  document.getElementById('console-view').style.display = 'block';
-  document.getElementById('detail-view').style.display = 'none';
-  document.getElementById('recurring-view').style.display = 'none';
-  document.getElementById('analytics-view').style.display = 'none';
+const ALL_VIEWS = ['console-view', 'detail-view', 'recurring-view', 'analytics-view', 'assets-view'];
+function showView(id){
+  ALL_VIEWS.forEach(function(v){
+    document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
+  });
 }
-function showDetail(){
-  document.getElementById('console-view').style.display = 'none';
-  document.getElementById('detail-view').style.display = 'block';
-  document.getElementById('recurring-view').style.display = 'none';
-  document.getElementById('analytics-view').style.display = 'none';
-}
-function showRecurring(){
-  document.getElementById('console-view').style.display = 'none';
-  document.getElementById('detail-view').style.display = 'none';
-  document.getElementById('recurring-view').style.display = 'block';
-  document.getElementById('analytics-view').style.display = 'none';
-}
+function showConsole(){ showView('console-view'); }
+function showDetail(){ showView('detail-view'); }
+function showRecurring(){ showView('recurring-view'); }
 // Analytics reads the same in-memory allTickets the console already loaded
 // -- no separate fetch, just a different view over data that's already
 // there (mirrors how the domain sidebar/stats bar work).
-function showAnalytics(){
-  document.getElementById('console-view').style.display = 'none';
-  document.getElementById('detail-view').style.display = 'none';
-  document.getElementById('recurring-view').style.display = 'none';
-  document.getElementById('analytics-view').style.display = 'block';
-}
+function showAnalytics(){ showView('analytics-view'); }
+function showAssets(){ showView('assets-view'); }
 document.getElementById('back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('recurring-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('recurring-nav-btn').addEventListener('click', function(){ showRecurring(); loadRecurringTemplates(); });
 document.getElementById('analytics-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('analytics-nav-btn').addEventListener('click', function(){ showAnalytics(); renderAnalytics(); });
+document.getElementById('assets-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
+document.getElementById('assets-nav-btn').addEventListener('click', function(){ showAssets(); loadAssets(); });
 
 // ── Ticket list ──
 // All tickets are fetched once and both the status pills and the domain
@@ -1532,6 +1620,8 @@ async function openTicket(id){
     document.getElementById('d-priority').value = t.priority;
     document.getElementById('d-category').value = t.category || 'Other';
     document.getElementById('d-assignee').value = t.assignee || '';
+    populateAssetSelect(emailDomain(t.email));
+    document.getElementById('d-asset').value = t.assetId || '';
     document.getElementById('delete-ticket-btn').disabled = false;
     document.getElementById('save-meta-btn').disabled = false;
 
@@ -1678,6 +1768,7 @@ document.getElementById('save-meta-btn').addEventListener('click', async functio
         priority: document.getElementById('d-priority').value,
         category: document.getElementById('d-category').value,
         assignee: document.getElementById('d-assignee').value,
+        assetId: document.getElementById('d-asset').value,
       }),
     });
   } catch (e) {
@@ -1917,6 +2008,221 @@ document.getElementById('rt-create-btn').addEventListener('click', async functio
   } finally {
     btn.disabled = false;
   }
+});
+
+// ── Assets ──
+// allAssets is loaded once at sign-in (so the ticket detail view's linked-
+// asset dropdown has options ready immediately) and refreshed on every visit
+// to the Assets view or CRUD action, mirroring how allTickets/staffDirectory
+// are handled elsewhere in this file.
+let allAssets = [];
+let editingAssetId = null;
+let currentAssetsDomainFilter = '';
+
+function assetStatusClass(status){
+  return 'badge-asset-' + String(status || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+// Amber inside the digest's own 30-day warranty lookahead window, red once
+// already expired -- purely a display cue, doesn't affect the (separate,
+// server-side) warranty digest job.
+function warrantyCellHtml(dateStr){
+  if (!dateStr) return '—';
+  // Explicit Z -- a bare 'T00:00:00' parses in the VIEWER'S LOCAL timezone,
+  // which shifts the expired/soon threshold by that viewer's UTC offset.
+  // The date is stored as a plain YYYY-MM-DD value, so treating it as UTC
+  // midnight keeps the classification the same for every viewer.
+  const days = Math.round((new Date(dateStr + 'T00:00:00Z').getTime() - Date.now()) / 86400000);
+  let cls = '';
+  if (days < 0) cls = 'warranty-expired';
+  else if (days <= 30) cls = 'warranty-soon';
+  return '<span class="' + cls + '">' + escapeHtml(dateStr) + (days < 0 ? ' (expired)' : '') + '</span>';
+}
+
+async function loadAssets(){
+  try {
+    const data = await apiFetch('/assets');
+    allAssets = data.assets || [];
+  } catch (e) {
+    allAssets = []; // dropdown/table still render, just empty
+  }
+  populateAssetSelect();
+  populateAssetsDomainFilter();
+  renderAssetsTable();
+}
+
+// filterDomain scopes the dropdown to one client's assets -- openTicket()
+// passes the ticket's own domain so staff can't accidentally pick another
+// client's hardware (the server independently rejects a cross-client link
+// too, but narrowing the options here means it's never offered in the
+// first place). Called with no argument at sign-in, before any ticket is
+// open, when there's no domain yet to scope to.
+function populateAssetSelect(filterDomain){
+  let list = allAssets;
+  if (filterDomain) list = list.filter(function(a){ return a.domain === filterDomain; });
+  const sorted = list.slice().sort(function(a, b){
+    return (a.domain + a.label).localeCompare(b.domain + b.label);
+  });
+  const optionsHtml = sorted.map(function(a){
+    return '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.label + ' — ' + a.domain) + '</option>';
+  }).join('');
+  document.getElementById('d-asset').innerHTML = '<option value="">No linked asset</option>' + optionsHtml;
+}
+
+function populateAssetsDomainFilter(){
+  const sel = document.getElementById('assets-domain-filter');
+  const domains = Array.from(new Set(allAssets.map(function(a){ return a.domain; }))).sort();
+  const optionsHtml = domains.map(function(d){
+    return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+  }).join('');
+  sel.innerHTML = '<option value="">All clients</option>' + optionsHtml;
+  sel.value = currentAssetsDomainFilter;
+  // If currentAssetsDomainFilter no longer matches any option (its last
+  // asset was deleted or moved), the browser silently falls the visible
+  // selection back to "" -- re-read it so the JS filter state stays in
+  // sync with what's actually shown, instead of renderAssetsTable() going
+  // on filtering by a domain the dropdown no longer displays as selected.
+  currentAssetsDomainFilter = sel.value;
+}
+
+function renderAssetsTable(){
+  const tbody = document.getElementById('assets-tbody');
+  let assets = allAssets;
+  if (currentAssetsDomainFilter) assets = assets.filter(function(a){ return a.domain === currentAssetsDomainFilter; });
+  if (!assets.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No assets tracked yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = assets.map(function(a){
+    return '<tr data-id="' + escapeHtml(a.id) + '">' +
+      '<td class="subject-cell">' + escapeHtml(a.label) + '</td>' +
+      '<td>' + escapeHtml(a.type) + '</td>' +
+      '<td>' + escapeHtml(a.domain) + '</td>' +
+      '<td><span class="badge ' + assetStatusClass(a.status) + '">' + escapeHtml(a.status) + '</span></td>' +
+      '<td>' + warrantyCellHtml(a.warrantyExpiration) + '</td>' +
+      '<td>' + escapeHtml(a.assignedTo || '—') + '</td>' +
+      '<td style="white-space:nowrap">' +
+        '<button type="button" class="asset-edit-btn recurring-nav-btn" data-id="' + escapeHtml(a.id) + '">Edit</button> ' +
+        '<button type="button" class="asset-delete-btn recurring-nav-btn" data-id="' + escapeHtml(a.id) + '">Delete</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+document.getElementById('assets-domain-filter').addEventListener('change', function(){
+  currentAssetsDomainFilter = this.value;
+  renderAssetsTable();
+});
+
+function resetAssetForm(){
+  editingAssetId = null;
+  document.getElementById('asset-form-title').textContent = 'Add an asset';
+  document.getElementById('asset-save-btn').textContent = 'Add asset';
+  document.getElementById('asset-cancel-edit-btn').hidden = true;
+  ['asset-label', 'asset-domain', 'asset-make', 'asset-model', 'asset-serial', 'asset-assigned-to', 'asset-notes', 'asset-purchase-date', 'asset-warranty-date'].forEach(function(id){
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('asset-type').value = 'Laptop';
+  document.getElementById('asset-status').value = 'Active';
+}
+
+function fillAssetForm(a){
+  editingAssetId = a.id;
+  document.getElementById('asset-form-title').textContent = 'Edit asset';
+  document.getElementById('asset-save-btn').textContent = 'Save changes';
+  document.getElementById('asset-cancel-edit-btn').hidden = false;
+  document.getElementById('asset-label').value = a.label;
+  document.getElementById('asset-domain').value = a.domain;
+  document.getElementById('asset-type').value = a.type;
+  document.getElementById('asset-status').value = a.status;
+  document.getElementById('asset-make').value = a.make || '';
+  document.getElementById('asset-model').value = a.model || '';
+  document.getElementById('asset-serial').value = a.serial || '';
+  document.getElementById('asset-assigned-to').value = a.assignedTo || '';
+  document.getElementById('asset-notes').value = a.notes || '';
+  document.getElementById('asset-purchase-date').value = a.purchaseDate || '';
+  document.getElementById('asset-warranty-date').value = a.warrantyExpiration || '';
+  document.getElementById('asset-form-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+document.getElementById('asset-cancel-edit-btn').addEventListener('click', resetAssetForm);
+
+document.getElementById('assets-tbody').addEventListener('click', async function(e){
+  const editBtn = e.target.closest('.asset-edit-btn');
+  const deleteBtn = e.target.closest('.asset-delete-btn');
+  if (editBtn) {
+    const asset = allAssets.find(function(a){ return a.id === editBtn.dataset.id; });
+    if (asset) fillAssetForm(asset);
+    return;
+  }
+  if (deleteBtn) {
+    const id = deleteBtn.dataset.id;
+    if (!confirm('Permanently delete this asset? Any ticket linked to it will show as unlinked.')) return;
+    deleteBtn.disabled = true;
+    try {
+      await apiFetch('/assets/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (editingAssetId === id) resetAssetForm();
+      loadAssets();
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+      deleteBtn.disabled = false;
+    }
+  }
+});
+
+document.getElementById('asset-save-btn').addEventListener('click', async function(){
+  const label = document.getElementById('asset-label').value.trim();
+  const domain = document.getElementById('asset-domain').value.trim().toLowerCase();
+  if (!label) { alert('Label is required.'); return; }
+  if (!domain) { alert('Client domain is required (e.g. acmecorp.com).'); return; }
+
+  const payload = {
+    label: label,
+    domain: domain,
+    type: document.getElementById('asset-type').value,
+    status: document.getElementById('asset-status').value,
+    make: document.getElementById('asset-make').value.trim(),
+    model: document.getElementById('asset-model').value.trim(),
+    serial: document.getElementById('asset-serial').value.trim(),
+    assignedTo: document.getElementById('asset-assigned-to').value.trim(),
+    notes: document.getElementById('asset-notes').value.trim(),
+    purchaseDate: document.getElementById('asset-purchase-date').value,
+    warrantyExpiration: document.getElementById('asset-warranty-date').value,
+  };
+
+  const btn = this;
+  btn.disabled = true;
+  try {
+    if (editingAssetId) {
+      await apiFetch('/assets/' + encodeURIComponent(editingAssetId), { method: 'PATCH', body: JSON.stringify(payload) });
+    } else {
+      await apiFetch('/assets', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    resetAssetForm();
+    loadAssets();
+  } catch (e) {
+    alert('Failed to save: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('assets-export-btn').addEventListener('click', function(){
+  let assets = allAssets;
+  if (currentAssetsDomainFilter) assets = assets.filter(function(a){ return a.domain === currentAssetsDomainFilter; });
+  const cols = ['id', 'label', 'domain', 'type', 'status', 'make', 'model', 'serial', 'assignedTo', 'purchaseDate', 'warrantyExpiration', 'notes'];
+  const lines = [cols.map(csvCell).join(',')].concat(assets.map(function(a){
+    return cols.map(function(c){ return csvCell(a[c]); }).join(',');
+  }));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'assets-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 });
 </script>
 </body>

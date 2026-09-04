@@ -6,15 +6,17 @@ const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
 const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
+const { findAssetById } = require('../lib/assetsTable');
+const { odataEscape } = require('../lib/odata');
 
 const STATUSES = ['Open', 'Pending', 'Resolved', 'Closed'];
 const PRIORITIES = ['Low', 'Normal', 'High'];
 
-// OData string literals escape an embedded single quote by doubling it.
-// ticketId/status here are either server-generated or whitelist-checked, but
-// this is cheap defense-in-depth against filter injection regardless.
-function odataEscape(s) {
-  return String(s).replace(/'/g, "''");
+// Same domain string the Assets table partitions by (see assetsTable.js) --
+// used to confirm a ticket only ever links to its own client's hardware.
+function emailDomain(email) {
+  const parts = String(email || '').split('@');
+  return parts.length === 2 ? parts[1].toLowerCase() : '';
 }
 
 // staff.html reads ?ticket= on load and opens that ticket directly instead
@@ -35,6 +37,7 @@ function metaToJson(e) {
     company: e.company,
     subject: e.subject,
     assignee: e.assignee || '',
+    assetId: e.assetId || '',
     rating: e.rating || null,
     ratedAt: e.ratedAt || null,
     totalTimeMinutes: e.totalTimeMinutes || 0,
@@ -123,7 +126,8 @@ app.http('ticketGet', {
   },
 });
 
-// Partial update of a ticket's status / priority / assignee.
+// Partial update of a ticket's status / priority / category / assignee /
+// linked asset.
 app.http('ticketUpdate', {
   methods: ['PATCH'],
   authLevel: 'anonymous',
@@ -192,6 +196,35 @@ app.http('ticketUpdate', {
         if (assignee && !STAFF_UPNS.includes(assignee)) throw new AuthError(400, 'Invalid assignee');
         update.assignee = assignee;
       }
+      // assetId is validated against the separate Assets table (not this
+      // one) -- a blank value unlinks the ticket from any asset. Only
+      // re-validated when it's actually CHANGING, not on every save: the
+      // console's "Save changes" button always sends assetId alongside
+      // status/priority/category/assignee, and the linked-asset dropdown
+      // isn't live-refreshed, so re-validating an unchanged value would
+      // both scan the Assets table on every single save (most of which
+      // don't touch this field) AND fail the ENTIRE request -- discarding
+      // an unrelated, already-valid status/priority change too -- the
+      // moment someone else deletes the asset a ticket already points at.
+      let linkedAssetLabel = null;
+      if (body.assetId !== undefined) {
+        const assetId = String(body.assetId || '').trim();
+        const previousAssetId = String(meta.assetId || '');
+        if (assetId && assetId !== previousAssetId) {
+          const asset = await findAssetById(assetId);
+          if (!asset) throw new AuthError(400, 'Invalid asset');
+          // Cross-client guard: findAssetById only confirms an asset
+          // exists somewhere, not that it belongs to THIS ticket's client
+          // -- without this, any ticket could be linked to any other
+          // client's hardware.
+          const ticketDomain = emailDomain(meta.email);
+          if (ticketDomain && asset.partitionKey !== ticketDomain) {
+            throw new AuthError(400, 'That asset belongs to a different client.');
+          }
+          linkedAssetLabel = asset.label;
+        }
+        update.assetId = assetId;
+      }
 
       await table.updateEntity(update, 'Merge');
 
@@ -207,6 +240,9 @@ app.http('ticketUpdate', {
       if (update.category !== undefined && update.category !== (meta.category || 'Other')) changes.push(`category → ${update.category}`);
       if (update.assignee !== undefined && update.assignee !== previousAssignee) {
         changes.push(`assignee → ${update.assignee || 'Unassigned'}`);
+      }
+      if (update.assetId !== undefined && update.assetId !== (meta.assetId || '')) {
+        changes.push(update.assetId ? `asset → ${linkedAssetLabel}` : 'asset unlinked');
       }
       if (changes.length) {
         await recordActivity(table, ticketId, `${user.name || user.upn} updated ${changes.join(', ')}`);

@@ -14,13 +14,10 @@ const {
 const { audit } = require('../lib/audit');
 const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { clientIp } = require('../lib/ip');
+const { odataEscape } = require('../lib/odata');
 
 function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-}
-
-function odataEscape(s) {
-  return String(s).replace(/'/g, "''");
 }
 
 function ticketToClientJson(e) {

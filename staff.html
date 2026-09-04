@@ -616,6 +616,8 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <select id="assets-domain-filter" style="padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">
             <option value="">All clients</option>
           </select>
+          <button class="recurring-nav-btn" id="assets-import-btn" type="button">Import CSV</button>
+          <input type="file" id="assets-import-input" accept=".csv,text/csv" hidden/>
           <button class="recurring-nav-btn" id="assets-export-btn" type="button">Export CSV</button>
         </div>
       </div>
@@ -2202,6 +2204,154 @@ document.getElementById('asset-save-btn').addEventListener('click', async functi
     loadAssets();
   } catch (e) {
     alert('Failed to save: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Assets: CSV import ──
+// A minimal but real RFC4180-ish tokenizer (quoted fields, embedded commas/
+// newlines, doubled-quote escaping) rather than a naive split(',') --
+// asset notes/model fields exported from Excel/Sheets routinely contain
+// commas, and a naive splitter would silently shift every column after one.
+// Every physical row is returned (including blank ones) tagged with its
+// real starting line number -- callers filter blank rows themselves, so a
+// stray blank line in the file never silently shifts a later row's
+// reported line number, and an embedded newline inside a quoted field is
+// correctly NOT counted as a new row.
+function parseCsvRows(text){
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  let line = 1;
+  let rowStartLine = 1;
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < normalized.length; i++) {
+    const c = normalized[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (normalized[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else {
+        if (c === '\n') line++;
+        field += c;
+      }
+      continue;
+    }
+    if (c === '"') { inQuotes = true; continue; }
+    if (c === ',') { row.push(field); field = ''; continue; }
+    if (c === '\n') {
+      row.push(field);
+      rows.push({ cells: row, line: rowStartLine });
+      row = []; field = ''; line++; rowStartLine = line;
+      continue;
+    }
+    field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push({ cells: row, line: rowStartLine }); }
+  return rows;
+}
+
+// Reverses csvCell's formula-injection guard (a leading ' before =/+/-/@,
+// added on export so Excel/Sheets never treats the value as a formula) --
+// without this, exporting an asset whose label/model/serial starts with
+// one of those characters and re-importing the same file would permanently
+// bake that apostrophe into the value.
+function stripFormulaGuard(v){
+  return /^'[=+\-@]/.test(v) ? v.slice(1) : v;
+}
+
+// Matches this app's own CSV export headers case/punctuation-insensitively
+// (e.g. "Assigned To", "assignedto", "assigned_to" all map the same way),
+// so a file round-tripped through Export CSV re-imports cleanly. "id" has
+// no mapping -- import always creates new assets, it never updates existing
+// ones by id.
+const ASSET_CSV_HEADER_MAP = {
+  label: 'label',
+  domain: 'domain', clientdomain: 'domain',
+  type: 'type',
+  status: 'status',
+  make: 'make',
+  model: 'model',
+  serial: 'serial', serialnumber: 'serial',
+  assignedto: 'assignedTo',
+  purchasedate: 'purchaseDate',
+  warrantyexpiration: 'warrantyExpiration', warranty: 'warrantyExpiration',
+  notes: 'notes',
+};
+
+// Returns row objects carrying a "_line" property (the file's real line
+// number, for reporting import results against) alongside the mapped
+// asset fields -- callers must strip "_line" before sending a row to the
+// API. Blank lines (including a stray one before the header, or between
+// data rows) are dropped based on their raw cells, before the header row
+// is even picked, so neither header detection nor the reported line
+// numbers are thrown off by them.
+function parseAssetCsv(text){
+  const rows = parseCsvRows(text).filter(function(r){
+    return r.cells.some(function(v){ return v.trim() !== ''; });
+  });
+  if (!rows.length) return [];
+  const fieldKeys = rows[0].cells.map(function(h){
+    return ASSET_CSV_HEADER_MAP[String(h || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')] || null;
+  });
+  return rows.slice(1).map(function(r){
+    const obj = { _line: r.line };
+    fieldKeys.forEach(function(key, i){
+      if (!key) return;
+      const value = stripFormulaGuard((r.cells[i] || '').trim());
+      // A header aliased more than once (e.g. both "Serial" and "Serial
+      // Number" present) keeps whichever aliased column has a real value
+      // first, rather than letting a later column silently overwrite it.
+      if (!obj[key]) obj[key] = value;
+    });
+    return obj;
+  });
+}
+
+document.getElementById('assets-import-btn').addEventListener('click', function(){
+  document.getElementById('assets-import-input').click();
+});
+
+document.getElementById('assets-import-input').addEventListener('change', async function(){
+  const file = this.files[0];
+  this.value = ''; // lets the same file be picked again later (e.g. after fixing it)
+  if (!file) return;
+
+  const text = await file.text();
+  const parsedRows = parseAssetCsv(text);
+  if (!parsedRows.length) { alert('No rows found in that CSV file.'); return; }
+  // "_line" is only for mapping a server-reported row index back to this
+  // file's real line number in the result message below -- never sent.
+  const rows = parsedRows.map(function(r){ const copy = Object.assign({}, r); delete copy._line; return copy; });
+
+  const missingRequired = rows.filter(function(r){ return !r.label || !r.domain; }).length;
+  const prompt = missingRequired
+    ? (rows.length + ' rows found, ' + missingRequired + ' are missing a label or client domain and will fail to import. Continue anyway?')
+    : ('Import ' + rows.length + ' asset' + (rows.length === 1 ? '' : 's') + ' from "' + file.name + '"?');
+  if (!confirm(prompt)) return;
+
+  const btn = document.getElementById('assets-import-btn');
+  btn.disabled = true;
+  try {
+    const result = await apiFetch('/assets/import', { method: 'POST', body: JSON.stringify({ assets: rows }) });
+    const created = result.created || [];
+    const failed = result.failed || [];
+    function realLine(index){ return parsedRows[index] ? parsedRows[index]._line : (index + 2); }
+    let msg = 'Imported ' + created.length + ' of ' + rows.length + ' asset' + (rows.length === 1 ? '' : 's') + '.';
+    const withWarnings = created.filter(function(c){ return c.warnings && c.warnings.length; });
+    if (withWarnings.length) {
+      msg += '\n\n' + withWarnings.length + ' imported with a note (row numbers are the file\'s real line numbers):\n' +
+        withWarnings.slice(0, 10).map(function(c){ return 'Line ' + realLine(c.index) + ' (' + c.label + '): ' + c.warnings.join('; '); }).join('\n');
+    }
+    if (failed.length) {
+      msg += '\n\n' + failed.length + ' row(s) failed:\n' +
+        failed.slice(0, 10).map(function(f){ return 'Line ' + realLine(f.index) + ': ' + f.error; }).join('\n');
+    }
+    alert(msg);
+    loadAssets();
+  } catch (e) {
+    alert('Import failed: ' + e.message);
   } finally {
     btn.disabled = false;
   }

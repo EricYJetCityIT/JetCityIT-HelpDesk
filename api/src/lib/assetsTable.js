@@ -36,8 +36,17 @@ async function ensureTable() {
   return ensured;
 }
 
+// An 8-char random suffix, not 4 like this app's other id generators --
+// assetsImport (assets.js) can call this up to MAX_IMPORT_ROWS times in a
+// tight loop with no `await` between calls (Array.map runs every row's
+// synchronous prefix before any of them actually hits the network), so
+// most of a large batch shares the same Date.now() millisecond and the
+// random suffix alone has to carry uniqueness across the whole batch, not
+// just protect against two unrelated single-item creates. 8 base36 chars
+// (36^8 ≈ 2.8 trillion) keeps a 200-row batch's collision odds negligible.
 function genAssetId() {
-  return 'AS-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const suffix = (Math.random().toString(36) + '00000000').slice(2, 10);
+  return 'AS-' + Date.now().toString(36).toUpperCase() + '-' + suffix.toUpperCase();
 }
 
 const ASSET_TYPES = ['Laptop', 'Desktop', 'Server', 'Printer', 'Network Equipment', 'Mobile Device', 'Other'];

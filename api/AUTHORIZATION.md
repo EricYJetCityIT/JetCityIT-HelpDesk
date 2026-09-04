@@ -456,6 +456,51 @@ justified yet for what's currently a staff/back-office feature.
   "leftover reference to deleted data" trade-offs (e.g. attachments are
   never proactively deleted from a ticket's thread either); revisit if this
   starts causing real confusion.
+- **Cross-client guard**: `PATCH /api/tickets/{id}` compares a linked
+  asset's domain against the ticket's own client (derived from its email)
+  before accepting the link, and the staff console's "Linked asset"
+  dropdown only ever lists that ticket's own client's assets in the first
+  place — a ticket can't be linked to another client's hardware.
+
+### Bulk CSV import
+
+`POST /api/assets/import` (staff-only) bulk-creates assets from a CSV file
+parsed client-side in `staff.html` (a hand-rolled tokenizer handling quoted
+fields, embedded commas/newlines, and doubled-quote escaping — the same
+column headers Export CSV produces, matched case/punctuation-insensitively,
+so a round-tripped export re-imports cleanly, including stripping back off
+the leading `'` Export CSV adds to any value starting with `=+-@` as a
+formula-injection guard). Gated by the same `rejectIfTooLarge`
+Content-Length check every other body-accepting route in this app uses
+(checked before `request.json()` ever parses the body), and capped at 200
+rows per request. Each row is created independently, at a capped
+concurrency (20 at a time via a small `settleWithConcurrency` helper, not
+all 200 at once — a large import usually lands entirely in one client's
+Table Storage partition) — one bad row never blocks the rest of the file,
+and the response reports every row's outcome
+(`created: [{index, id, label, warnings}]`, `failed: [{index, error}]`) so
+staff can see exactly what happened rather than an all-or-nothing result. A
+failed row's message distinguishes a validation problem (specific and not
+worth retrying as-is) from a transport/storage error like a throttling
+response or an id collision (flagged as safe to retry).
+
+The frontend tracks each parsed row's real file line number (not just its
+position in the filtered list of non-blank rows) so a result like "Line 8:
+missing domain" always points at the actual line to fix, even when the file
+has blank lines mixed in with data rows.
+
+Row validation (`validateImportRow` in `assets.js`) is deliberately more
+lenient than a single create/update: `label` and `domain` still have no
+sensible default and reject that row outright (sharing the exact same
+validation as a single create/update, via `validateLabelAndDomain`), but an
+unrecognized `type`/`status` value defaults to `Other`/`Active` (with a
+`warnings` note) rather than failing the row, and an invalid date is
+dropped (also noted) rather than rejected — a spreadsheet exported from
+another system won't necessarily match this app's exact vocabulary, and
+rejecting a whole hardware record over one bad column would defeat the
+point of a bulk-onboarding tool. Import always creates new assets; it has
+no concept of updating an existing one by id, even if the file includes an
+`id` column (Export CSV's own `id` column is simply ignored on import).
 
 ## Testing
 
@@ -510,4 +555,15 @@ justified yet for what's currently a staff/back-office feature.
   duplicated. Delete a linked asset → the ticket's dropdown no longer shows
   it selected (falls back to blank) rather than erroring. Try
   `PATCH /api/assets/{id}` or `DELETE /api/assets/{id}` as a signed-in but
-  non-staff account → 403, same as any other staff route.
+  non-staff account → 403, same as any other staff route. Try linking a
+  ticket to another client's asset (e.g. via a raw API call, since the
+  dropdown itself won't offer one) → 400, not a silent success.
+- **Asset CSV import**: export the Assets table to CSV, then re-import that
+  same file → every row round-trips into a new asset (the `id` column is
+  ignored, so this creates duplicates rather than updating anything — Import
+  always creates new rows). Import a file with one row missing a domain and
+  a few others fine → the good rows import, the bad one is reported by row
+  number and reason, nothing partially written. Import a row with an
+  unrecognized status (e.g. "Broken") → it imports as Active with a
+  reported warning rather than failing the row. Import a file of 201+ rows
+  → rejected before anything is written, with a clear row-count error.

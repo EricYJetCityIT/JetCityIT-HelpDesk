@@ -402,6 +402,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="hdr-right">
       <button class="analytics-nav-btn" id="analytics-nav-btn" type="button">📊 Analytics</button>
       <button class="recurring-nav-btn" id="assets-nav-btn" type="button">🖥️ Assets</button>
+      <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Team Portal</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
@@ -690,6 +691,22 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <button class="save-meta-btn" id="asset-save-btn" type="button">Add asset</button>
         <button class="merge-btn" id="asset-cancel-edit-btn" type="button" hidden>Cancel edit</button>
       </div>
+    </div>
+  </div>
+
+  <div id="org-view" style="display:none;max-width:900px;margin:0 auto;padding:28px 24px 60px">
+    <button class="back-link" id="org-back-btn">← Back to tickets</button>
+    <div class="detail-card">
+      <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:6px">Team Portal access</h1>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Enable a client's email domain to let anyone at that organization sign up for shared access to every ticket filed by their team, at <code>/team.html</code>.</p>
+      <div class="controls-row" style="margin-bottom:20px">
+        <div class="ctrl" style="flex:1;min-width:220px">
+          <label>Client domain</label>
+          <input type="text" id="org-domain-input" placeholder="e.g. fredhutch.org"/>
+        </div>
+        <button class="save-meta-btn" id="org-enable-btn" type="button">Enable</button>
+      </div>
+      <div id="org-domains-list"></div>
     </div>
   </div>
 
@@ -983,7 +1000,7 @@ async function afterSignIn(){
 }
 
 // ── View switching ──
-const ALL_VIEWS = ['console-view', 'detail-view', 'recurring-view', 'analytics-view', 'assets-view'];
+const ALL_VIEWS = ['console-view', 'detail-view', 'recurring-view', 'analytics-view', 'assets-view', 'org-view'];
 function showView(id){
   ALL_VIEWS.forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
@@ -997,6 +1014,7 @@ function showRecurring(){ showView('recurring-view'); }
 // there (mirrors how the domain sidebar/stats bar work).
 function showAnalytics(){ showView('analytics-view'); }
 function showAssets(){ showView('assets-view'); }
+function showOrg(){ showView('org-view'); }
 document.getElementById('back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('recurring-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('recurring-nav-btn').addEventListener('click', function(){ showRecurring(); loadRecurringTemplates(); });
@@ -1004,6 +1022,8 @@ document.getElementById('analytics-back-btn').addEventListener('click', function
 document.getElementById('analytics-nav-btn').addEventListener('click', function(){ showAnalytics(); renderAnalytics(); });
 document.getElementById('assets-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('assets-nav-btn').addEventListener('click', function(){ showAssets(); loadAssets(); });
+document.getElementById('org-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
+document.getElementById('org-nav-btn').addEventListener('click', function(){ showOrg(); loadOrgDomains(); });
 
 // ── Ticket list ──
 // All tickets are fetched once and both the status pills and the domain
@@ -2373,6 +2393,92 @@ document.getElementById('assets-export-btn').addEventListener('click', function(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+});
+
+// ── Team Portal admin ──
+async function loadOrgDomains(){
+  const container = document.getElementById('org-domains-list');
+  container.innerHTML = 'Loading…';
+  try {
+    const data = await apiFetch('/org/admin/domains');
+    renderOrgDomains(data.domains || []);
+  } catch (e) {
+    container.innerHTML = 'Failed to load: ' + escapeHtml(e.message);
+  }
+}
+
+function renderOrgDomains(domains){
+  const container = document.getElementById('org-domains-list');
+  if (!domains.length) {
+    container.innerHTML = '<p style="color:var(--text3);font-size:13px">No domains enabled or signed up yet.</p>';
+    return;
+  }
+  container.innerHTML = domains.map(function(d){
+    const accountsHtml = d.accounts.length
+      ? '<table style="margin-top:8px"><thead><tr><th>Name</th><th>Email</th><th>Verified</th><th>Signed up</th><th></th></tr></thead><tbody>' +
+        d.accounts.map(function(a){
+          return '<tr><td>' + escapeHtml(a.name || '—') + '</td><td>' + escapeHtml(a.email) + '</td>' +
+            '<td>' + (a.verified ? '✅' : '⏳ pending') + '</td>' +
+            '<td class="updated-cell">' + (a.createdAt ? relativeTime(a.createdAt) : '—') + '</td>' +
+            '<td><button type="button" class="org-remove-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Remove</button></td></tr>';
+        }).join('') + '</tbody></table>'
+      : '<p style="color:var(--text3);font-size:13px;margin-top:8px">No one has signed up yet.</p>';
+    return '<div class="table-card" style="margin-bottom:14px;padding:14px 16px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
+        '<div><strong>' + escapeHtml(d.domain) + '</strong> <span class="badge ' + (d.enabled ? 'badge-Open' : 'badge-Closed') + '">' + (d.enabled ? 'Enabled' : 'Disabled') + '</span></div>' +
+        '<button type="button" class="org-toggle-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-enabled="' + d.enabled + '">' + (d.enabled ? 'Disable' : 'Enable') + '</button>' +
+      '</div>' + accountsHtml +
+    '</div>';
+  }).join('');
+}
+
+document.getElementById('org-domains-list').addEventListener('click', async function(e){
+  const toggleBtn = e.target.closest('.org-toggle-btn');
+  const removeBtn = e.target.closest('.org-remove-btn');
+  if (toggleBtn) {
+    const domain = toggleBtn.dataset.domain;
+    const currentlyEnabled = toggleBtn.dataset.enabled === 'true';
+    if (currentlyEnabled && !confirm('Disable team portal access for ' + domain + '? Existing accounts stay on file but won\'t be able to sign in until re-enabled.')) return;
+    toggleBtn.disabled = true;
+    try {
+      await apiFetch('/org/admin/domains/' + encodeURIComponent(domain), { method: 'POST', body: JSON.stringify({ enabled: !currentlyEnabled }) });
+      loadOrgDomains();
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
+      toggleBtn.disabled = false;
+    }
+    return;
+  }
+  if (removeBtn) {
+    const domain = removeBtn.dataset.domain;
+    const email = removeBtn.dataset.email;
+    if (!confirm('Permanently remove ' + email + '\'s team portal account? They\'d need to sign up again (and re-verify) to get back in.')) return;
+    removeBtn.disabled = true;
+    try {
+      await apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email), { method: 'DELETE' });
+      loadOrgDomains();
+    } catch (err) {
+      alert('Failed to remove: ' + err.message);
+      removeBtn.disabled = false;
+    }
+  }
+});
+
+document.getElementById('org-enable-btn').addEventListener('click', async function(){
+  const input = document.getElementById('org-domain-input');
+  const domain = input.value.trim().toLowerCase();
+  if (!domain) { alert('Enter a domain, e.g. fredhutch.org'); return; }
+  const btn = this;
+  btn.disabled = true;
+  try {
+    await apiFetch('/org/admin/domains/' + encodeURIComponent(domain), { method: 'POST', body: JSON.stringify({ enabled: true }) });
+    input.value = '';
+    loadOrgDomains();
+  } catch (e) {
+    alert('Failed to enable: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
 });
 </script>
 </body>

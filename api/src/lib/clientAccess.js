@@ -1,6 +1,7 @@
-const crypto = require('crypto');
 const { getClient, ensureTable } = require('./tables');
 const { AuthError } = require('./auth');
+const { emailDomain } = require('./domain');
+const { genToken, safeTokenEqual } = require('./tokens');
 
 // Client-facing ticket tracking has no account system -- clients aren't
 // @jetcityit.com users and ticket submission itself is unauthenticated (no
@@ -16,20 +17,6 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
-// Plain !== short-circuits at the first differing character, leaking a
-// timing signal correlated with how many leading characters a guess got
-// right -- this is the one secret the whole client-auth model rests on
-// (ticket IDs are guessable, see genTicketId), so it's worth comparing
-// properly. crypto.timingSafeEqual needs equal-length buffers, which two
-// arbitrary strings aren't guaranteed to be -- hashing both first sidesteps
-// that without weakening the comparison (a mismatched token still can't
-// produce a matching digest).
-function safeTokenEqual(a, b) {
-  const bufA = crypto.createHash('sha256').update(String(a)).digest();
-  const bufB = crypto.createHash('sha256').update(String(b)).digest();
-  return crypto.timingSafeEqual(bufA, bufB);
-}
-
 // Table Storage RowKeys reject '/', '\\', '#', '?' and control characters --
 // none of which are valid in an email address anyway, so a normalized email
 // is always safe to use as one directly.
@@ -43,7 +30,7 @@ async function getOrCreateClientToken(email) {
   } catch (e) {
     if (e.statusCode !== 404) throw e;
   }
-  const token = crypto.randomBytes(24).toString('hex');
+  const token = genToken();
   try {
     await table.createEntity({ partitionKey: CLIENT_PARTITION, rowKey: key, token, createdAt: new Date().toISOString() });
   } catch (e) {
@@ -89,10 +76,27 @@ async function findTicketsByEmail(email) {
   return metas;
 }
 
+// Same scan-and-filter approach as findTicketsByEmail above (see its own
+// comment) -- small ticket volume makes an OData filter unnecessary here
+// too, and domain isn't its own stored field, so it has to be derived in
+// code regardless. Used by the org team-portal (orgPortal.js), where
+// visibility is scoped to every ticket from a client's domain rather than
+// one specific email.
+async function findTicketsByDomain(domain) {
+  const key = String(domain || '').trim().toLowerCase();
+  await ensureTable();
+  const table = getClient();
+  const metas = [];
+  for await (const e of table.listEntities({ queryOptions: { filter: "kind eq 'meta'" } })) {
+    if (emailDomain(e.email) === key) metas.push(e);
+  }
+  return metas;
+}
+
 function buildTrackingLink(email, token, ticketId) {
   const params = new URLSearchParams({ email, token });
   if (ticketId) params.set('ticket', ticketId);
   return `https://helpdesk.jetcityit.com/track.html?${params.toString()}`;
 }
 
-module.exports = { normalizeEmail, getOrCreateClientToken, verifyClientToken, findTicketsByEmail, buildTrackingLink };
+module.exports = { normalizeEmail, getOrCreateClientToken, verifyClientToken, findTicketsByEmail, findTicketsByDomain, buildTrackingLink };

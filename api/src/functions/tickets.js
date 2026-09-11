@@ -8,16 +8,10 @@ const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAcce
 const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { findAssetById } = require('../lib/assetsTable');
 const { odataEscape } = require('../lib/odata');
+const { emailDomain } = require('../lib/domain');
 
 const STATUSES = ['Open', 'Pending', 'Resolved', 'Closed'];
 const PRIORITIES = ['Low', 'Normal', 'High'];
-
-// Same domain string the Assets table partitions by (see assetsTable.js) --
-// used to confirm a ticket only ever links to its own client's hardware.
-function emailDomain(email) {
-  const parts = String(email || '').split('@');
-  return parts.length === 2 ? parts[1].toLowerCase() : '';
-}
 
 // staff.html reads ?ticket= on load and opens that ticket directly instead
 // of the list -- used so an assignment-notification email can link straight

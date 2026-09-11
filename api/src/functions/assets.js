@@ -4,6 +4,7 @@ const { getClient, ensureTable, genAssetId, ASSET_TYPES, ASSET_STATUSES, findAss
 const { audit } = require('../lib/audit');
 const { odataEscape } = require('../lib/odata');
 const { rejectIfTooLarge } = require('../lib/attachments');
+const { isValidDomain } = require('../lib/domain');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function isValidDate(s) {
@@ -14,14 +15,6 @@ function isValidDate(s) {
   // over to the next valid one instead of rejecting it -- round-tripping
   // back to an ISO date string and comparing catches that rollover.
   return d.toISOString().slice(0, 10) === s;
-}
-
-// Loose but sufficient -- this is a staff-entered field, not a public one,
-// and only needs to catch an obviously malformed value before it becomes
-// this table's own partition key.
-const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
-function isValidDomain(s) {
-  return DOMAIN_RE.test(s);
 }
 
 function assetToJson(e) {

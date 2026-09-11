@@ -68,6 +68,133 @@ Client-facing responses omit internal fields (`assignee`, staff UPNs) —
 staff messages are attributed simply to "Jet City IT Help Desk", not the
 individual technician.
 
+## Team Portal (`/team.html`, `api/org/*`) — shared, domain-scoped client accounts
+
+A second, separate client-facing auth model, for a client organization
+that wants several of their own people to see and reply to tickets filed
+by *anyone* on their team, not just the person who filed each one (e.g. so
+someone's out-of-office doesn't block a ticket from getting a reply). This
+is materially different from the individual tracking portal above — that
+model is deliberately per-email and passwordless; this one needs real,
+independent, revocable identities that all share one visibility scope, so
+it introduces this app's first real password-based accounts.
+
+**Opt-in, staff-controlled, per client domain.** A client's domain (e.g.
+`fredhutch.org`) has no team-portal access at all until a staff member
+explicitly enables it (`POST /api/org/admin/domains/{domain}`, staff-only,
+`staff.html`'s new "Team Portal" nav view). Nothing about a ticket ever
+being submitted from a domain enables this automatically — it's a
+deliberate expansion of what a client can see (an entire team's ticket
+history, not one person's), so it warrants an explicit decision per
+client, unlike the individual portal's magic-link access (which only ever
+grants access to the tickets tied to the specific email that was
+verified).
+
+**Accounts, not links.** Each person signs up for their own account
+(`POST /api/org/signup`: name, email, password) — the email's domain must
+already be enabled, and a persistent password is genuinely necessary here
+(unlike the individual portal, where a rotating magic link is enough,
+since there's only ever one person to authenticate). The password is
+salted and hashed with Node's built-in `scrypt` (`api/src/lib/orgUsers.js`)
+— never stored or compared in plain text, and no new npm dependency was
+needed for this (this environment can't run `npm install` locally to
+verify a new package before pushing, so `crypto.scrypt` was preferred over
+adding e.g. `bcrypt`).
+
+**Email verification is still the real security boundary**, same
+philosophy as the rest of this app's client-facing auth: a fresh account
+starts unverified, and a verification link (proof of inbox ownership, not
+returned directly by the signup response) has to be clicked before the
+account can sign in — this is what actually confirms whoever signed up
+controls that `@clientdomain` address, the same role the magic link
+itself plays for the individual portal.
+
+**Sign-in issues a session token** (`POST /api/org/login` → `{name,
+domain, sessionToken}`), a random server-generated bearer secret stored
+plain and compared via a hash-both-sides-then-`timingSafeEqual` check
+(`api/src/lib/tokens.js`, shared with the individual portal's own access
+token in `clientAccess.js`) — appropriate for a random, single-purpose
+token, unlike a real password. `POST /api/org/logout` clears it,
+invalidating that device's session immediately. The login check also runs
+the SAME password verification cost whether or not the email is actually
+registered (`DUMMY_PASSWORD_HASH`), so a nonexistent email can't be
+distinguished from a wrong password by response timing.
+
+**The session credential always travels as headers** (`X-Org-Email`,
+`X-Org-Session`), never a query string, URL, or `<img src>` — unlike the
+individual portal's per-email token (which only ever unlocks one person's
+own tickets, so a leaked link is low-value), a team-portal session grants
+an entire organization's ticket history and lets its holder post replies
+attributed to that specific named teammate, so it deliberately never ends
+up anywhere it could persist outside the request (browser history,
+address-bar autocomplete, proxy/access logs). Attachment images are
+fetched via `orgFetchBlob` + a `blob:` object URL (`team.html`, mirroring
+`staff.html`'s own bearer-token-authed `apiFetchBlob` pattern) rather than
+a plain `<img src>`, since a plain tag can't carry a custom header.
+
+**Sessions expire after 30 days** (`SESSION_MAX_AGE_MS` in
+`orgUsers.js`) even without an explicit logout — a deliberately shorter
+leash than the individual portal's magic link (which never expires), given
+how much more a team-portal session actually grants access to.
+
+**Staff can revoke one account without touching the rest of the team.**
+`DELETE /api/org/admin/domains/{domain}/accounts/{email}`
+(`staff.html`'s Team Portal view, a "Remove" button per account) deletes
+a single account outright — invalidating its password and session token
+in one step — for cutting off a departed or compromised person without
+disabling `setDomainEnabled` for the whole client.
+
+**Ticket visibility is scoped by domain, not by individual account.**
+`GET /api/org/tickets`, `GET /api/org/tickets/{id}`, and
+`POST /api/org/tickets/{id}/replies` all check the *ticket's* requester
+email domain against the *session's* domain (`findTicketsByDomain` in
+`clientAccess.js`, alongside its existing `findTicketsByEmail`) — every
+verified account on an enabled domain sees the exact same ticket set.
+Disabling a domain (`POST .../domains/{domain}` with `enabled:false`)
+immediately blocks sign-in and every session check for every account on
+it, without deleting any account — re-enabling needs no re-signup.
+
+Replies are attributed to the real signed-in person's name (`authorName`),
+not a generic "you" — since more than one teammate can post into the same
+thread, unlike the individual portal where there's only ever one person on
+the other end.
+
+**Signup always returns the same generic `{ok:true}`** regardless of
+whether the email is brand new, already has an unverified account (which
+just resends the verification email), or already has a verified one —
+matching the enumeration-avoidance `orgLogin` and
+`orgResendVerification` already use, so this endpoint can't be used to
+learn which coworkers at an enabled domain have already signed up.
+
+**Known gaps, accepted for now**: no self-service password reset (a
+locked-out user needs a staff member to delete their account via the admin
+view so they can sign up fresh, rather than resetting a forgotten
+password directly); no permanent brute-force lockout beyond the existing
+per-IP/per-email rate limiting (an in-memory fixed-window counter, same as
+every other rate limit in this app — a determined attacker could still
+grind through guesses across many windows over time, just slowly); and no
+way for a team-portal account to submit a brand new ticket (only view/
+reply to ones that already exist). All three are flagged as possible
+fast-follows, deliberately left out of this first pass to keep it scoped
+to what was actually asked for (continuity of coverage on existing
+tickets).
+
+**Adversarial security review** (high effort, 10 findings confirmed and
+fixed before this shipped): the domain-move-style duplicate-row class of
+bug doesn't apply here (no equivalent operation), but review did catch —
+the missing per-account revocation and query-string credential exposure
+described above; a signup response that leaked account existence/
+verification status through distinguishable HTTP responses (now unified);
+a missing `isValidDomain` check that let a malformed email's domain reach
+Table Storage as a raw partition key (`getAccount` in `orgUsers.js` now
+guards every caller against this); a signup race condition where two
+concurrent requests for the same new email could 500 instead of resolving
+cleanly; redundant sequential Table Storage reads on every session check
+(now run concurrently); a dead `try/catch` and an unused export
+(simplification); and `safeTokenEqual`/token generation being defined
+twice across the individual and team portals (consolidated into
+`api/src/lib/tokens.js`).
+
 ## Image (and .eml) attachments
 
 Clients and staff can both attach up to 4 images (PNG/JPEG/GIF/WEBP, 10 MB
@@ -567,3 +694,26 @@ no concept of updating an existing one by id, even if the file includes an
   unrecognized status (e.g. "Broken") → it imports as Active with a
   reported warning rather than failing the row. Import a file of 201+ rows
   → rejected before anything is written, with a clear row-count error.
+- **Team Portal**: sign up with a domain staff hasn't enabled → 403, clear
+  message. Staff enables the domain (`staff.html`'s Team Portal view) →
+  the same signup now succeeds and an unverified account row exists (shown
+  in that same admin view). Try signing in before verifying → 403 telling
+  you to check your inbox. Click the verification link → account flips to
+  verified, shown live in the admin view; signing in now works and returns
+  a session. A second person signs up on the same domain, and each replies
+  to a ticket the other filed → both succeed, both show up in the same
+  shared ticket list, and each reply is attributed to the real person who
+  wrote it. Staff disables the domain → both accounts immediately can't
+  sign in (existing sessions also stop working on their next request), but
+  re-enabling needs no re-signup. Try a wrong password → generic "Invalid
+  email or password," not "no such account." Try requesting a new
+  verification link for an email with no account → same generic
+  `{ok:true}` response as a real one, no email sent. Sign up again with an
+  email that's already verified → same generic `{ok:true}` as any other
+  signup, not a distinguishable "already exists" error. Staff removes one
+  account via the admin view's "Remove" button → that person's session
+  immediately stops working and their old password no longer signs them
+  in, but their teammates on the same domain are unaffected. Inspect a
+  ticket detail page's network requests → the session credential appears
+  only in `X-Org-Email`/`X-Org-Session` request headers, never in a URL or
+  query string.

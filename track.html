@@ -116,6 +116,8 @@ button{font:inherit;cursor:pointer}
 .hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px}
 .hdr-right a{font-size:13px;color:var(--text3);text-decoration:none}
 .hdr-right a:hover{color:var(--text2)}
+.hdr-pill-link{font-weight:600;color:var(--text2)!important;border:1px solid var(--border);border-radius:20px;padding:5px 14px!important}
+.hdr-pill-link:hover{background:var(--bg);color:var(--text)!important}
 .hdr-org-link{font-weight:600;color:var(--green-dark)!important;border:1px solid var(--green-dark);border-radius:20px;padding:5px 14px!important}
 .hdr-org-link:hover{background:var(--green-dark);color:#fff!important}
 
@@ -218,8 +220,8 @@ tbody td{padding:13px 16px;vertical-align:middle}
   </a>
   <div class="hdr-right" style="display:flex;gap:16px;align-items:center">
     <a class="hdr-org-link" href="/team.html">Organization sign in</a>
-    <a href="/faq.html">Help Center</a>
-    <a href="/">New request</a>
+    <a class="hdr-pill-link" href="/faq.html">Help Center</a>
+    <a class="hdr-pill-link" href="/">New request</a>
     <div class="theme-switcher">
       <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>

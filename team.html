@@ -232,7 +232,27 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <div class="field-hint">At least 10 characters.</div>
       </div>
       <button type="submit" class="submit-btn" id="signup-btn">Sign up</button>
-      <p class="field-hint">Sign-up is only available for organizations whose domain has been enabled for the team portal by Jet City IT.</p>
+      <p class="field-hint">Sign-up is only available for organizations whose domain has been enabled for the organization portal by Jet City IT.</p>
+    </form>
+  </div>
+</div>
+
+<div class="wrap" id="reset-view" style="display:none">
+  <h1>Set a new password</h1>
+  <p class="lede">Choose a new password for your organization portal account.</p>
+  <div class="card">
+    <div class="err-msg" id="reset-err" style="display:none"></div>
+    <form id="reset-form">
+      <div class="field">
+        <label for="reset-password">New password</label>
+        <input type="password" id="reset-password" required minlength="10"/>
+        <div class="field-hint">At least 10 characters.</div>
+      </div>
+      <div class="field">
+        <label for="reset-password-confirm">Confirm new password</label>
+        <input type="password" id="reset-password-confirm" required minlength="10"/>
+      </div>
+      <button type="submit" class="submit-btn" id="reset-btn">Set new password</button>
     </form>
   </div>
 </div>
@@ -370,7 +390,7 @@ async function orgFetchBlob(path){
 }
 
 function showView(id){
-  ['auth-view', 'list-view', 'detail-view'].forEach(function(v){
+  ['auth-view', 'reset-view', 'list-view', 'detail-view'].forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
   });
 }
@@ -505,7 +525,7 @@ async function loadTicketList(){
     });
   } catch (e) {
     if (e.status === 401 || e.status === 403) {
-      forgetSession('Your session has expired or your organization\'s team portal access has changed. Please sign in again.');
+      forgetSession('Your session has expired or your organization\'s portal access has changed. Please sign in again.');
       return;
     }
     tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
@@ -538,7 +558,7 @@ async function openTicket(id){
     loadAttachmentThumbs(thread);
   } catch (e) {
     if (e.status === 401 || e.status === 403) {
-      forgetSession('Your session has expired or your organization\'s team portal access has changed. Please sign in again.');
+      forgetSession('Your session has expired or your organization\'s portal access has changed. Please sign in again.');
       return;
     }
     document.getElementById('thread').innerHTML = 'Failed to load ticket: ' + escapeHtml(e.message);
@@ -648,10 +668,49 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
   }
 });
 
+// ── Set a new password (from a staff-triggered reset email) ──
+let pendingResetEmail = null;
+let pendingResetToken = null;
+
+document.getElementById('reset-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const errEl = document.getElementById('reset-err');
+  errEl.style.display = 'none';
+  const newPassword = document.getElementById('reset-password').value;
+  if (newPassword !== document.getElementById('reset-password-confirm').value) {
+    errEl.textContent = 'Those passwords don\'t match.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('reset-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    await orgFetch('/reset-password', {
+      method: 'POST',
+      body: { email: pendingResetEmail, token: pendingResetToken, newPassword: newPassword },
+    });
+    document.getElementById('reset-form').reset();
+    showView('auth-view');
+    document.getElementById('si-email').value = pendingResetEmail;
+    const infoEl = document.getElementById('auth-info');
+    infoEl.textContent = 'Your password has been reset — sign in with your new password below.';
+    infoEl.style.display = 'block';
+  } catch (err) {
+    errEl.textContent = err.message || 'That reset link is invalid or has expired.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Set new password';
+  }
+});
+
 // ── Boot ──
 const params = new URLSearchParams(location.search);
 const verifyEmail = params.get('verifyEmail');
 const verifyToken = params.get('verifyToken');
+const resetEmail = params.get('resetEmail');
+const resetToken = params.get('resetToken');
 if (verifyEmail && verifyToken) {
   history.replaceState({}, '', location.pathname);
   (async function(){
@@ -667,6 +726,11 @@ if (verifyEmail && verifyToken) {
       errEl.style.display = 'block';
     }
   })();
+} else if (resetEmail && resetToken) {
+  history.replaceState({}, '', location.pathname);
+  pendingResetEmail = resetEmail;
+  pendingResetToken = resetToken;
+  showView('reset-view');
 } else if (session) {
   loadTicketList();
 } else {

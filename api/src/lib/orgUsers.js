@@ -126,6 +126,29 @@ async function setDomainEnabled(domain, enabled, staffUpn) {
   );
 }
 
+// Disabling/re-enabling one account -- the reversible, per-person
+// counterpart to setDomainEnabled above. Disabling also clears the
+// session token/timestamp immediately (not just relying on the live
+// `disabled` check in requireOrgSession), so re-enabling the account
+// later can never silently revive a session that was valid before the
+// disable -- getting back in always requires a fresh sign-in.
+async function setAccountDisabled(domain, email, disabled, staffUpn) {
+  await ensureTable();
+  const table = getClient();
+  const update = {
+    partitionKey: domain,
+    rowKey: normalizeEmail(email),
+    disabled: !!disabled,
+    disabledBy: staffUpn || '',
+    disabledAt: new Date().toISOString(),
+  };
+  if (disabled) {
+    update.sessionToken = '';
+    update.sessionIssuedAt = '';
+  }
+  await table.updateEntity(update, 'Merge');
+}
+
 async function getAccount(email) {
   const domain = emailDomain(email);
   // isValidDomain guards every caller (signup/login/verify/resend/session
@@ -174,6 +197,7 @@ async function listAllDomainsWithAccounts() {
         email: e.rowKey,
         name: e.name,
         verified: !!e.verified,
+        disabled: !!e.disabled,
         createdAt: e.createdAt,
       });
     }
@@ -195,6 +219,7 @@ module.exports = {
   isDomainEnabled,
   setDomainEnabled,
   getAccount,
+  setAccountDisabled,
   deleteAccount,
   listAllDomainsWithAccounts,
 };

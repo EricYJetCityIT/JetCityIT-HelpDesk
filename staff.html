@@ -2415,12 +2415,17 @@ function renderOrgDomains(domains){
   }
   container.innerHTML = domains.map(function(d){
     const accountsHtml = d.accounts.length
-      ? '<table style="margin-top:8px"><thead><tr><th>Name</th><th>Email</th><th>Verified</th><th>Signed up</th><th></th></tr></thead><tbody>' +
+      ? '<table style="margin-top:8px"><thead><tr><th>Name</th><th>Email</th><th>Verified</th><th>Status</th><th>Signed up</th><th></th></tr></thead><tbody>' +
         d.accounts.map(function(a){
           return '<tr><td>' + escapeHtml(a.name || '—') + '</td><td>' + escapeHtml(a.email) + '</td>' +
             '<td>' + (a.verified ? '✅' : '⏳ pending') + '</td>' +
+            '<td>' + (a.disabled ? '🚫 Disabled' : '✅ Active') + '</td>' +
             '<td class="updated-cell">' + (a.createdAt ? relativeTime(a.createdAt) : '—') + '</td>' +
-            '<td><button type="button" class="org-remove-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Remove</button></td></tr>';
+            '<td style="white-space:nowrap">' +
+              '<button type="button" class="org-resetpw-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Reset password</button> ' +
+              '<button type="button" class="org-disable-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '" data-disabled="' + a.disabled + '">' + (a.disabled ? 'Enable' : 'Disable') + '</button> ' +
+              '<button type="button" class="org-remove-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Remove</button>' +
+            '</td></tr>';
         }).join('') + '</tbody></table>'
       : '<p style="color:var(--text3);font-size:13px;margin-top:8px">No one has signed up yet.</p>';
     return '<div class="table-card" style="margin-bottom:14px;padding:14px 16px">' +
@@ -2435,6 +2440,40 @@ function renderOrgDomains(domains){
 document.getElementById('org-domains-list').addEventListener('click', async function(e){
   const toggleBtn = e.target.closest('.org-toggle-btn');
   const removeBtn = e.target.closest('.org-remove-btn');
+  const resetPwBtn = e.target.closest('.org-resetpw-btn');
+  const disableBtn = e.target.closest('.org-disable-btn');
+  if (resetPwBtn) {
+    const domain = resetPwBtn.dataset.domain;
+    const email = resetPwBtn.dataset.email;
+    if (!confirm('Send a password reset email to ' + email + '?')) return;
+    resetPwBtn.disabled = true;
+    try {
+      await apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email) + '/reset-password', { method: 'POST' });
+      // Sending is best-effort server-side (a Graph/mail outage is only
+      // logged, never surfaced here) -- worded to not overpromise delivery.
+      alert('Password reset requested for ' + email + '. If their mailbox is reachable, they should receive a link shortly.');
+    } catch (err) {
+      alert('Failed to send reset email: ' + err.message);
+    } finally {
+      resetPwBtn.disabled = false;
+    }
+    return;
+  }
+  if (disableBtn) {
+    const domain = disableBtn.dataset.domain;
+    const email = disableBtn.dataset.email;
+    const currentlyDisabled = disableBtn.dataset.disabled === 'true';
+    if (!currentlyDisabled && !confirm('Disable ' + email + '\'s account? They\'ll be signed out immediately and unable to sign back in until re-enabled.')) return;
+    disableBtn.disabled = true;
+    try {
+      await apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email), { method: 'POST', body: JSON.stringify({ disabled: !currentlyDisabled }) });
+      loadOrgDomains();
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
+      disableBtn.disabled = false;
+    }
+    return;
+  }
   if (toggleBtn) {
     const domain = toggleBtn.dataset.domain;
     const currentlyEnabled = toggleBtn.dataset.enabled === 'true';

@@ -137,12 +137,45 @@ a plain `<img src>`, since a plain tag can't carry a custom header.
 leash than the individual portal's magic link (which never expires), given
 how much more a team-portal session actually grants access to.
 
-**Staff can revoke one account without touching the rest of the team.**
-`DELETE /api/org/admin/domains/{domain}/accounts/{email}`
-(`staff.html`'s Team Portal view, a "Remove" button per account) deletes
-a single account outright — invalidating its password and session token
-in one step — for cutting off a departed or compromised person without
-disabling `setDomainEnabled` for the whole client.
+**Staff can revoke one account without touching the rest of the team**,
+two different ways depending on whether it should be reversible:
+- `DELETE /api/org/admin/domains/{domain}/accounts/{email}` ("Remove")
+  deletes a single account outright — invalidating its password and
+  session token in one step. Irreversible; they'd need a brand-new
+  sign-up (and re-verification) to get back in.
+- `POST /api/org/admin/domains/{domain}/accounts/{email}` with
+  `{disabled: true|false}` ("Disable"/"Enable") is the reversible
+  alternative — the account, password, and history are left intact, just
+  blocked from signing in (and kicked out of any already-open session
+  immediately, since `requireOrgSession` checks `disabled` on every
+  request, not just at login). Re-enabling needs no re-signup.
+
+Both are separate from `setDomainEnabled`, which acts on an entire client
+domain at once rather than one person. All three account-level actions
+(delete, disable/enable, reset-password) share one `resolveAccountAction`
+helper (`orgAdmin.js`) that validates the URL, confirms the account
+actually belongs to the named domain, and applies a per-account rate limit
+(10/hour) — the same protection every anonymous org/* endpoint already has
+via a per-IP + per-email `checkRateLimit` pair, extended here so a
+compromised staff session (or a careless script looping over accounts)
+can't hammer one target account through the admin surface either.
+
+**Staff can also trigger a password reset for one account**
+(`POST /api/org/admin/domains/{domain}/accounts/{email}/reset-password`,
+a "Reset password" button) — emails the account holder a link
+(`api/src/lib/orgEmails.js`'s `sendPasswordResetEmail`, the same "prove
+inbox ownership" pattern as signup verification) to
+`POST /api/org/reset-password` with a new password of their own choosing.
+Consuming the link also clears any existing session, forcing
+re-authentication with the new password everywhere; it's also rejected
+outright (403) for a disabled account, same as login, so "Disable" reads
+as a full freeze rather than just blocking sign-in. There's still no
+*self-service* "forgot password" entry point on the sign-in form itself —
+a locked-out user has to ask staff to trigger this for them — but the
+underlying mechanism (token, email, set-new-password page) is the same
+either way, so adding one later is mostly a matter of a new anonymous
+"request a reset" endpoint reusing `sendPasswordResetEmail`, not new
+plumbing.
 
 **Ticket visibility is scoped by domain, not by individual account.**
 `GET /api/org/tickets`, `GET /api/org/tickets/{id}`, and
@@ -166,18 +199,16 @@ matching the enumeration-avoidance `orgLogin` and
 `orgResendVerification` already use, so this endpoint can't be used to
 learn which coworkers at an enabled domain have already signed up.
 
-**Known gaps, accepted for now**: no self-service password reset (a
-locked-out user needs a staff member to delete their account via the admin
-view so they can sign up fresh, rather than resetting a forgotten
-password directly); no permanent brute-force lockout beyond the existing
+**Known gaps, accepted for now**: no *self-service* "forgot password" (a
+locked-out user needs to ask a staff member to trigger the reset for them
+— see above); no permanent brute-force lockout beyond the existing
 per-IP/per-email rate limiting (an in-memory fixed-window counter, same as
 every other rate limit in this app — a determined attacker could still
 grind through guesses across many windows over time, just slowly); and no
 way for a team-portal account to submit a brand new ticket (only view/
-reply to ones that already exist). All three are flagged as possible
-fast-follows, deliberately left out of this first pass to keep it scoped
-to what was actually asked for (continuity of coverage on existing
-tickets).
+reply to ones that already exist). Both remaining gaps are flagged as
+possible fast-follows, deliberately left out of this pass to keep it
+scoped to what was actually asked for.
 
 **Adversarial security review** (high effort, 10 findings confirmed and
 fixed before this shipped): the domain-move-style duplicate-row class of
@@ -716,4 +747,17 @@ no concept of updating an existing one by id, even if the file includes an
   in, but their teammates on the same domain are unaffected. Inspect a
   ticket detail page's network requests → the session credential appears
   only in `X-Org-Email`/`X-Org-Session` request headers, never in a URL or
-  query string.
+  query string. Staff clicks "Disable" on one account while that person is
+  signed in elsewhere → their very next request fails with "This account
+  has been disabled," not just their next sign-in attempt; "Enable" lets
+  them sign in again with their existing password, no re-signup needed.
+  Staff clicks "Reset password" → the account holder gets an email with a
+  set-new-password link; entering mismatched passwords on that page is
+  caught client-side before any request is sent. Using the link signs out
+  any existing session for that account and the old password stops working
+  immediately. A stale/reused reset link → "Invalid or expired reset
+  link," not a silent failure. Disable an account, then try its
+  (still-unused) reset link → also rejected, not silently honored.
+  Hammering the same account's admin actions (reset/disable/remove) more
+  than 10 times in an hour → 429, independent of how many other accounts
+  or domains staff are managing at the same time.

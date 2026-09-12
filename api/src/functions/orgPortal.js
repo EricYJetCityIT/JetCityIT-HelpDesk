@@ -21,6 +21,7 @@ const {
   isDomainEnabled,
   getAccount,
 } = require('../lib/orgUsers');
+const { sendVerificationEmail } = require('../lib/orgEmails');
 const { getClient: getTicketsClient, ensureTable: ensureTicketsTable, genMessageRowKey } = require('../lib/tables');
 const { findTicketsByDomain } = require('../lib/clientAccess');
 const {
@@ -66,33 +67,18 @@ async function requireOrgSession(email, sessionToken) {
   if (!account || !account.sessionToken || !safeTokenEqual(account.sessionToken, sessionToken)) {
     throw new AuthError(403, 'Invalid session -- please sign in again.');
   }
+  // A disabled account is a real account staff have deliberately cut off
+  // (see orgAdmin.js) -- checked on every request, not just at login, so
+  // disabling someone kicks them out of an already-open session immediately
+  // rather than only blocking their next sign-in.
+  if (account.disabled) throw new AuthError(403, 'This account has been disabled. Contact Jet City IT for help.');
   if (!account.verified) throw new AuthError(403, 'Account not verified.');
-  if (!domainEnabled) throw new AuthError(403, 'Team portal access is not currently enabled for this organization.');
+  if (!domainEnabled) throw new AuthError(403, 'Organization portal access is not currently enabled for this organization.');
   const issuedAt = account.sessionIssuedAt ? new Date(account.sessionIssuedAt).getTime() : 0;
   if (!issuedAt || Date.now() - issuedAt > SESSION_MAX_AGE_MS) {
     throw new AuthError(403, 'Your session has expired -- please sign in again.');
   }
   return { email: normalized, name: account.name, domain };
-}
-
-// Shared by signup (new account) and resend-verification (an existing,
-// still-unverified one) -- regenerates the token each time so an old,
-// possibly-leaked verification email stops working once a new one is sent.
-async function issueVerificationEmail(name, email, domain, context) {
-  const verifyToken = genToken();
-  await ensureTable();
-  await getClient().updateEntity({ partitionKey: domain, rowKey: email, verifyToken }, 'Merge');
-  const link = `https://helpdesk.jetcityit.com/team.html?verifyEmail=${encodeURIComponent(email)}&verifyToken=${encodeURIComponent(verifyToken)}`;
-  try {
-    const html = `<p>Hi ${escapeHtml(name)},</p>
-<p>Confirm your email to finish setting up Jet City IT team portal access for <strong>${escapeHtml(domain)}</strong>:</p>
-<p><a href="${escapeHtml(link)}">Verify my account</a></p>
-<p>If you didn't request this, you can safely ignore this email.</p>
-<p>— Jet City IT Help Desk</p>`;
-    await sendMail({ from: SUPPORT_MAILBOX, to: email, subject: 'Verify your Jet City IT team portal account', html });
-  } catch (e) {
-    context.log('ORG_VERIFY_EMAIL_FAILED ' + JSON.stringify({ email, error: e.message }));
-  }
 }
 
 function ticketToOrgJson(e) {
@@ -156,7 +142,7 @@ app.http('orgSignup', {
       if (!emailLimit.allowed) throw new AuthError(429, 'Too many requests -- please slow down.', { retryAfterSec: emailLimit.retryAfterSec });
 
       if (!(await isDomainEnabled(domain))) {
-        throw new AuthError(403, 'Team portal sign-up isn\'t available for this email domain yet -- contact Jet City IT to have it enabled for your organization.');
+        throw new AuthError(403, 'Organization portal sign-up isn\'t available for this email domain yet -- contact Jet City IT to have it enabled for your organization.');
       }
 
       // From here on, every path returns the exact same {ok:true} response
@@ -171,7 +157,7 @@ app.http('orgSignup', {
           // Not verified yet -- the common cause is a lost/expired first
           // email, not someone else's account, so resend rather than
           // silently doing nothing.
-          await issueVerificationEmail(existing.name, email, domain, context);
+          await sendVerificationEmail(existing.name, email, domain, context);
         }
         return { jsonBody: { ok: true } };
       }
@@ -202,7 +188,7 @@ app.http('orgSignup', {
       }
 
       if (created) {
-        await issueVerificationEmail(name, email, domain, context);
+        await sendVerificationEmail(name, email, domain, context);
         audit(context, null, 'org.signup', { domain });
       }
       return { jsonBody: { ok: true } };
@@ -235,7 +221,7 @@ app.http('orgResendVerification', {
         if (emailLimit.allowed) {
           const account = await getAccount(email);
           if (account && !account.verified) {
-            await issueVerificationEmail(account.name, email, emailDomain(email), context);
+            await sendVerificationEmail(account.name, email, emailDomain(email), context);
           }
         }
       }
@@ -281,6 +267,60 @@ app.http('orgVerify', {
   },
 });
 
+// Consumes a reset token a staff member triggered (orgAdmin.js's
+// reset-password action) and sets a new password. Anonymous -- the token
+// itself, emailed only to the account's own address, is what proves this
+// is the real account owner (same "prove inbox ownership" model as
+// verification), not a signed-in session.
+app.http('orgResetPassword', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'org/reset-password',
+  handler: async (request, context) => {
+    try {
+      const ip = clientIp(request);
+      const rl = checkRateLimit('org-resetpw-ip:' + ip, 10, 60 * 60 * 1000);
+      if (!rl.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
+      }
+
+      const body = await request.json().catch(() => ({}));
+      const email = normalizeEmail(body.email);
+      const token = String(body.token || '');
+      const newPassword = String(body.newPassword || '');
+      if (newPassword.length < 10) throw new AuthError(400, 'Password must be at least 10 characters.');
+
+      const account = await getAccount(email);
+      if (!account || !account.resetToken || !safeTokenEqual(account.resetToken, token)) {
+        throw new AuthError(403, 'Invalid or expired reset link.');
+      }
+      // A disabled account shouldn't be able to change its own credentials
+      // via a reset link -- login/requireOrgSession already re-check this
+      // (so a disabled account still couldn't sign in even without this
+      // guard), but allowing the reset to silently succeed anyway would
+      // contradict "Disable" reading as a full freeze.
+      if (account.disabled) throw new AuthError(403, 'This account has been disabled. Contact Jet City IT for help.');
+
+      const domain = emailDomain(email);
+      const passwordHash = await hashPassword(newPassword);
+      await ensureTable();
+      // Also clears any existing session -- a password reset should force
+      // re-authentication with the new password everywhere, not leave a
+      // session from before the reset (e.g. on a device that prompted it)
+      // still valid.
+      await getClient().updateEntity(
+        { partitionKey: domain, rowKey: email, passwordHash, resetToken: '', sessionToken: '', sessionIssuedAt: '' },
+        'Merge'
+      );
+
+      audit(context, null, 'org.resetPassword', { domain });
+      return { jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
 // ── Login / logout ──
 app.http('orgLogin', {
   methods: ['POST'],
@@ -312,8 +352,9 @@ app.http('orgLogin', {
       // enumerate valid team-portal emails purely by timing.
       const passwordOk = await verifyPassword(password, account ? account.passwordHash : DUMMY_PASSWORD_HASH);
       if (!account || !passwordOk) throw new AuthError(401, 'Invalid email or password.');
+      if (account.disabled) throw new AuthError(403, 'This account has been disabled. Contact Jet City IT for help.');
       if (!account.verified) throw new AuthError(403, 'Please verify your email before signing in -- check your inbox for the verification link.');
-      if (!domainEnabled) throw new AuthError(403, 'Team portal access is not currently enabled for this organization.');
+      if (!domainEnabled) throw new AuthError(403, 'Organization portal access is not currently enabled for this organization.');
 
       const sessionToken = genToken();
       await ensureTable();
@@ -502,7 +543,7 @@ app.http('orgTicketReply', {
       audit(context, null, 'ticket.orgReply', { ticketId, domain: session.domain });
 
       try {
-        const html = `<p>Team portal reply on ticket ${escapeHtml(ticketId)} (${escapeHtml(meta.subject)}) from <strong>${escapeHtml(session.name)}</strong> (${escapeHtml(session.domain)}):</p>
+        const html = `<p>Organization portal reply on ticket ${escapeHtml(ticketId)} (${escapeHtml(meta.subject)}) from <strong>${escapeHtml(session.name)}</strong> (${escapeHtml(session.domain)}):</p>
 <p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
 <p><a href="https://helpdesk.jetcityit.com/staff.html">Open in staff console</a></p>`;
         await sendMail({ from: SUPPORT_MAILBOX, to: SUPPORT_MAILBOX, subject: `Client replied: ${meta.subject} [${ticketId}]`, html });

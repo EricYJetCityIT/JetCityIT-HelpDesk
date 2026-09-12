@@ -402,7 +402,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="hdr-right">
       <button class="analytics-nav-btn" id="analytics-nav-btn" type="button">📊 Analytics</button>
       <button class="recurring-nav-btn" id="assets-nav-btn" type="button">🖥️ Assets</button>
-      <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Team Portal</button>
+      <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Organization Portal</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
@@ -697,7 +697,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
   <div id="org-view" style="display:none;max-width:900px;margin:0 auto;padding:28px 24px 60px">
     <button class="back-link" id="org-back-btn">← Back to tickets</button>
     <div class="detail-card">
-      <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:6px">Team Portal access</h1>
+      <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:6px">Organization Portal access</h1>
       <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Enable a client's email domain to let anyone at that organization sign up for shared access to every ticket filed by their team, at <code>/team.html</code>.</p>
       <div class="controls-row" style="margin-bottom:20px">
         <div class="ctrl" style="flex:1;min-width:220px">
@@ -2438,7 +2438,7 @@ document.getElementById('org-domains-list').addEventListener('click', async func
   if (toggleBtn) {
     const domain = toggleBtn.dataset.domain;
     const currentlyEnabled = toggleBtn.dataset.enabled === 'true';
-    if (currentlyEnabled && !confirm('Disable team portal access for ' + domain + '? Existing accounts stay on file but won\'t be able to sign in until re-enabled.')) return;
+    if (currentlyEnabled && !confirm('Disable organization portal access for ' + domain + '? Existing accounts stay on file but won\'t be able to sign in until re-enabled.')) return;
     toggleBtn.disabled = true;
     try {
       await apiFetch('/org/admin/domains/' + encodeURIComponent(domain), { method: 'POST', body: JSON.stringify({ enabled: !currentlyEnabled }) });
@@ -2452,7 +2452,7 @@ document.getElementById('org-domains-list').addEventListener('click', async func
   if (removeBtn) {
     const domain = removeBtn.dataset.domain;
     const email = removeBtn.dataset.email;
-    if (!confirm('Permanently remove ' + email + '\'s team portal account? They\'d need to sign up again (and re-verify) to get back in.')) return;
+    if (!confirm('Permanently remove ' + email + '\'s organization portal account? They\'d need to sign up again (and re-verify) to get back in.')) return;
     removeBtn.disabled = true;
     try {
       await apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email), { method: 'DELETE' });

@@ -127,6 +127,12 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .badge-Pending{background:var(--amber-light);color:var(--amber)}
 .badge-Resolved{background:var(--green-light);color:var(--green-dark)}
 .badge-Closed{background:var(--bg);color:var(--text3);border:1px solid var(--border)}
+.badge-asset-active{background:var(--green-light);color:var(--green-dark)}
+.badge-asset-in-repair{background:var(--amber-light);color:var(--amber)}
+.badge-asset-retired{background:var(--bg);color:var(--text3);border:1px solid var(--border)}
+.badge-asset-spare{background:var(--blue-light);color:var(--blue)}
+.warranty-soon{color:var(--amber);font-weight:600}
+.warranty-expired{color:var(--red);font-weight:600}
 
 .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:13px;font-weight:600;background:none;border:none;margin-bottom:16px}
 .detail-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:24px;margin-bottom:20px}
@@ -276,6 +282,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     </div>
     <div style="display:flex;gap:12px;align-items:center">
       <button class="reply-send-btn" id="new-ticket-btn" type="button">＋ New ticket</button>
+      <button class="not-you" id="view-assets-btn">🖥️ Assets</button>
       <button class="not-you" id="export-csv-btn">Export CSV</button>
       <button class="not-you" id="signout-btn">Sign out</button>
     </div>
@@ -288,6 +295,22 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <table>
       <thead><tr><th>Subject</th><th>Filed by</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody id="tickets-tbody"><tr class="empty-row"><td colspan="5">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="wrap wrap-wide" id="assets-view" style="display:none">
+  <button class="back-link" id="assets-back-btn">← Back to team tickets</button>
+  <div class="list-toolbar">
+    <div>
+      <h1 style="margin-bottom:2px">Your organization's assets</h1>
+      <p style="color:var(--text2);font-size:13px">Read-only — contact Jet City IT to update anything here.</p>
+    </div>
+  </div>
+  <div class="table-card">
+    <table>
+      <thead><tr><th>Label</th><th>Type</th><th>Make / Model</th><th>Serial</th><th>Status</th><th>Assigned to</th><th>Warranty</th></tr></thead>
+      <tbody id="assets-tbody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -443,7 +466,7 @@ async function orgFetchBlob(path){
 }
 
 function showView(id){
-  ['auth-view', 'reset-view', 'list-view', 'new-ticket-view', 'detail-view'].forEach(function(v){
+  ['auth-view', 'reset-view', 'list-view', 'new-ticket-view', 'assets-view', 'detail-view'].forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
   });
 }
@@ -927,6 +950,58 @@ document.getElementById('new-ticket-form').addEventListener('submit', async func
     btn.disabled = false;
   }
 });
+
+// ── Assets (read-only) ──
+function assetStatusClass(status){
+  return 'badge-asset-' + String(status || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+// Same amber/red warranty-lookahead display cue as staff.html's asset
+// table -- explicit Z so the expired/soon threshold doesn't shift by the
+// viewer's own timezone offset against a plain YYYY-MM-DD stored date.
+function warrantyCellHtml(dateStr){
+  if (!dateStr) return '—';
+  const days = Math.round((new Date(dateStr + 'T00:00:00Z').getTime() - Date.now()) / 86400000);
+  let cls = '';
+  if (days < 0) cls = 'warranty-expired';
+  else if (days <= 30) cls = 'warranty-soon';
+  return '<span class="' + cls + '">' + escapeHtml(dateStr) + (days < 0 ? ' (expired)' : '') + '</span>';
+}
+
+async function loadAssets(){
+  showView('assets-view');
+  const tbody = document.getElementById('assets-tbody');
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Loading…</td></tr>';
+  try {
+    const data = await orgFetch('/assets');
+    const assets = data.assets || [];
+    if (!assets.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No assets on file for your organization yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = assets.map(function(a){
+      const makeModel = [a.make, a.model].filter(Boolean).join(' / ') || '—';
+      return '<tr>' +
+        '<td class="subject-cell">' + escapeHtml(a.label) + '</td>' +
+        '<td>' + escapeHtml(a.type) + '</td>' +
+        '<td>' + escapeHtml(makeModel) + '</td>' +
+        '<td>' + escapeHtml(a.serial || '—') + '</td>' +
+        '<td><span class="badge ' + assetStatusClass(a.status) + '">' + escapeHtml(a.status) + '</span></td>' +
+        '<td>' + escapeHtml(a.assignedTo || '—') + '</td>' +
+        '<td>' + warrantyCellHtml(a.warrantyExpiration) + '</td>' +
+      '</tr>';
+    }).join('');
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) {
+      forgetSession('Your session has expired or your organization\'s portal access has changed. Please sign in again.');
+      return;
+    }
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Failed to load assets: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+document.getElementById('view-assets-btn').addEventListener('click', loadAssets);
+document.getElementById('assets-back-btn').addEventListener('click', loadTicketList);
 
 // ── Set a new password (from a staff-triggered reset email) ──
 let pendingResetEmail = null;

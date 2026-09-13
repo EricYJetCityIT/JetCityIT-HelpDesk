@@ -291,6 +291,32 @@ a failed non-auth fetch, or immediately after sign-out) — otherwise a
 stray click could repaint a stale or even a different, previously
 signed-in organization's cached ticket data on a shared workstation.
 
+**A signed-in org account can also see a read-only view of their own
+hardware inventory** (`GET /api/org/assets`, the "🖥️ Assets" button on the
+ticket list) — the same domain-partitioned `Assets` table staff.html's
+asset tracking already writes to, scoped to `session.domain` the same way
+`GET /api/org/tickets` scopes to it. Deliberately excludes the asset's
+`notes` field: that's staff-internal commentary (repair history, internal
+observations) never meant to reach the client it's about, the same
+"staff-only" boundary this app already draws around a ticket's `kind:
+'note'` rows. There is no write path here — staff remain the only ones
+who can create, edit, move, or delete an asset record; the org portal
+only ever reads. staff.html's Notes field is now explicitly labeled
+"internal only — never shown to the client" so a tech can't reasonably
+assume a note they write there will reach the client (the schema has no
+separate client-visible-note field to write one instead).
+
+**Known gaps, accepted for now**: `assignedTo` is a freeform 200-char
+field ("Person or location"), not a controlled vocabulary, and IS shown
+to the client verbatim — unlike `notes`, there's no staff-only boundary
+around it, so it relies on staff using it for what its label says rather
+than as a second notes field. And the Assets view is read-only with no
+"report an issue with this asset" link into ticket creation — a client
+who spots something wrong has to file an unrelated new ticket with no
+asset context attached. Both are flagged as possible fast-follows,
+deliberately left out of this pass to keep it scoped to what was
+actually asked for (visibility, not a feedback loop).
+
 **Signup always returns the same generic `{ok:true}`** regardless of
 whether the email is brand new, already has an unverified account (which
 just resends the verification email), or already has a verified one —
@@ -932,4 +958,10 @@ no concept of updating an existing one by id, even if the file includes an
   so a stray click can't repaint stale data over the error message; sign
   out and back in as a different organization on the same tab → the
   previous org's tickets never flash on screen before the new load
-  completes.
+  completes. Click "🖥️ Assets" → the signed-in organization's own assets
+  load (label/type/make/model/serial/status/assigned-to/warranty), with
+  the same amber/red warranty-soon/expired highlighting staff.html uses;
+  an asset's internal `notes` field never appears anywhere in the org
+  portal. An organization with no assets on file sees a clean empty state,
+  not an error. Confirm there's no way to create/edit/delete an asset from
+  this view — it's read-only by omission, not by a hidden check.

@@ -23,6 +23,7 @@ const {
 } = require('../lib/orgUsers');
 const { sendVerificationEmail } = require('../lib/orgEmails');
 const { getClient: getTicketsClient, ensureTable: ensureTicketsTable, genMessageRowKey, recordActivity, applyTicketRating } = require('../lib/tables');
+const { getClient: getAssetsClient, ensureTable: ensureAssetsTable } = require('../lib/assetsTable');
 const { findTicketsByDomain } = require('../lib/clientAccess');
 const { createTicket } = require('../lib/ticketCreation');
 const {
@@ -845,6 +846,68 @@ app.http('orgAttachmentGet', {
         },
         body: result.buffer,
       };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// ── Assets (read-only, domain-scoped) ──
+// Deliberately excludes `notes` -- staff-internal commentary (e.g. "client
+// complained about noise, scheduled for RMA") that's never meant to reach
+// the client it's about, same spirit as ticket `kind: 'note'` rows staying
+// staff-only. `domain` itself is also omitted since it's always the
+// session's own domain here, unlike staff.html's cross-client view.
+function assetToOrgJson(e) {
+  return {
+    id: e.rowKey,
+    label: e.label,
+    type: e.type,
+    make: e.make || '',
+    model: e.model || '',
+    serial: e.serial || '',
+    purchaseDate: e.purchaseDate || '',
+    warrantyExpiration: e.warrantyExpiration || '',
+    status: e.status,
+    assignedTo: e.assignedTo || '',
+    createdAt: e.createdAt,
+    updatedAt: e.updatedAt,
+  };
+}
+
+// A read-only view of the signed-in organization's own hardware inventory
+// -- lets a client see what IT has on file for them (make/model/serial,
+// who it's assigned to, warranty status) without needing to ask, reusing
+// the same Assets table staff.html's asset tracking already writes to.
+// No write path here: staff remain the only ones who can create/edit/
+// delete an asset record.
+app.http('orgAssetsList', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'org/assets',
+  handler: async (request, context) => {
+    try {
+      const ip = clientIp(request);
+      // Same budget as the ticket-list/detail reads (org-view-ip) -- this
+      // is the same class of action (an authenticated read), not a
+      // separate abuse surface.
+      const rl = checkRateLimit('org-view-ip:' + ip, 60, 60 * 1000);
+      if (!rl.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
+      }
+
+      const creds = readOrgCreds(request);
+      const session = await requireOrgSession(creds.email, creds.sessionToken);
+
+      await ensureAssetsTable();
+      const table = getAssetsClient();
+      const assets = [];
+      for await (const e of table.listEntities({ queryOptions: { filter: `PartitionKey eq '${odataEscape(session.domain)}'` } })) {
+        assets.push(assetToOrgJson(e));
+      }
+      assets.sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+
+      return { jsonBody: { assets } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

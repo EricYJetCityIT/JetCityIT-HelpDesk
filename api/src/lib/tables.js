@@ -82,4 +82,34 @@ async function recordActivity(table, ticketId, text) {
   }
 }
 
-module.exports = { getClient, ensureTable, TABLE_NAME, genTicketId, genMessageRowKey, genMessageRowKeyAt, TICKET_CATEGORIES, recordActivity };
+// Shared core of "save a Yes/No satisfaction rating on a resolved ticket"
+// -- both the individual client portal (clientPortal.js, an email+token
+// pair proves ownership) and the Organization Portal (orgPortal.js, a
+// domain match proves it) need this exact fetch + status-gate + merge
+// sequence and only differ in how they establish the caller may act on
+// this ticket at all. `isOwned(meta)` runs right after the fetch, in the
+// same position each caller's own ownership check used to sit, so a
+// ticket that exists but isn't this caller's still comes back as
+// 'not_found' rather than leaking a 400 that would confirm it exists.
+async function applyTicketRating(table, ticketId, rating, isOwned, extraFields) {
+  let meta;
+  try {
+    meta = await table.getEntity(ticketId, '0');
+  } catch (e) {
+    if (e.statusCode === 404) return { status: 'not_found' };
+    throw e;
+  }
+  if (!isOwned(meta)) return { status: 'not_found' };
+  if (meta.status !== 'Resolved' && meta.status !== 'Closed') return { status: 'not_resolved' };
+
+  // Overwrite, not append -- only the latest answer is meaningful, whether
+  // that's the same person changing their mind or (Organization Portal
+  // only) a different teammate.
+  await table.updateEntity(
+    { partitionKey: ticketId, rowKey: '0', rating, ratedAt: new Date().toISOString(), ...(extraFields || {}) },
+    'Merge'
+  );
+  return { status: 'ok', meta };
+}
+
+module.exports = { getClient, ensureTable, TABLE_NAME, genTicketId, genMessageRowKey, genMessageRowKeyAt, TICKET_CATEGORIES, recordActivity, applyTicketRating };

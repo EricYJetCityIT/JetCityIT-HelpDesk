@@ -110,6 +110,7 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 
 .list-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap}
 .list-toolbar .not-you{font-size:13px;color:var(--text3);background:none;border:none;text-decoration:underline}
+.list-toolbar .not-you:disabled,.list-filter-btn:disabled{opacity:.5;cursor:default;text-decoration:none}
 .table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:14px}
 thead th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);padding:12px 16px;border-bottom:1px solid var(--border);white-space:nowrap}
@@ -129,6 +130,15 @@ tbody td{padding:13px 16px;vertical-align:middle}
 
 .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:13px;font-weight:600;background:none;border:none;margin-bottom:16px}
 .detail-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:24px;margin-bottom:20px}
+.rating-title{font-weight:600;margin-bottom:10px}
+.rating-btns{display:flex;gap:10px;margin-bottom:10px}
+.rating-btn{padding:9px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-weight:600;font-size:14px;color:var(--text2)}
+.rating-btn:hover{background:var(--bg)}
+.rating-btn.active{border-color:var(--green);color:var(--green-dark);background:var(--green-light)}
+.rating-thanks{color:var(--text2);font-size:14px}
+.list-filter{display:flex;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:14px;width:fit-content}
+.list-filter-btn{padding:6px 14px;border:none;border-radius:6px;background:none;font-weight:600;font-size:13px;color:var(--text3)}
+.list-filter-btn.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
 .detail-id{color:var(--text3);font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;margin-bottom:4px}
 .detail-card h1{font-size:19px;letter-spacing:-.3px;margin-bottom:10px}
 
@@ -266,8 +276,13 @@ tbody td{padding:13px 16px;vertical-align:middle}
     </div>
     <div style="display:flex;gap:12px;align-items:center">
       <button class="reply-send-btn" id="new-ticket-btn" type="button">＋ New ticket</button>
+      <button class="not-you" id="export-csv-btn">Export CSV</button>
       <button class="not-you" id="signout-btn">Sign out</button>
     </div>
+  </div>
+  <div class="list-filter" id="list-filter">
+    <button type="button" class="list-filter-btn active" data-filter="all">All tickets</button>
+    <button type="button" class="list-filter-btn" data-filter="mine">My tickets</button>
   </div>
   <div class="table-card">
     <table>
@@ -309,6 +324,14 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="detail-id" id="d-ticket-id"></div>
     <h1 id="d-subject"></h1>
     <span class="badge" id="d-status-badge"></span>
+  </div>
+  <div class="detail-card" id="rating-card" style="display:none">
+    <div class="rating-title">Was this resolved to your satisfaction?</div>
+    <div class="rating-btns">
+      <button type="button" class="rating-btn" id="rating-yes-btn">👍 Yes</button>
+      <button type="button" class="rating-btn" id="rating-no-btn">👎 No</button>
+    </div>
+    <div class="rating-thanks" id="rating-thanks" style="display:none"></div>
   </div>
   <div class="detail-card">
     <div class="thread" id="thread"></div>
@@ -428,6 +451,15 @@ function showView(id){
 function forgetSession(message){
   localStorage.removeItem('hd_org_session');
   session = null;
+  // A shared workstation could sign in as a different org right after --
+  // without this, a stray click on the (still-visible-for-an-instant)
+  // filter toggle could repaint the PREVIOUS domain's cached ticket data
+  // under the new session's header before the new fetch completes.
+  allTickets = [];
+  listFilter = 'all';
+  Array.prototype.forEach.call(document.querySelectorAll('.list-filter-btn'), function(b){
+    b.classList.toggle('active', b.dataset.filter === 'all');
+  });
   showView('auth-view');
   const errEl = document.getElementById('auth-err');
   if (message) { errEl.textContent = message; errEl.style.display = 'block'; }
@@ -546,38 +578,117 @@ document.getElementById('signout-btn').addEventListener('click', async function(
 });
 
 // ── Ticket list / detail / reply ──
+let allTickets = [];
+let listFilter = 'all'; // 'all' | 'mine'
+
+// Guards the filter/export controls against acting on data that isn't
+// actually current -- a fetch still in flight, or one that failed outright
+// (a session-expiry failure already navigates away via forgetSession, so
+// this only ever matters for a non-auth failure, where allTickets is
+// cleared below rather than left holding a previous, now-stale load).
+function setTicketListControlsEnabled(enabled){
+  Array.prototype.forEach.call(document.querySelectorAll('.list-filter-btn, #export-csv-btn'), function(b){
+    b.disabled = !enabled;
+  });
+}
+
+function filteredTickets(){
+  // Case-insensitive: session.email is already lowercased at sign-in, but a
+  // ticket filed through the public form (before this person had a portal
+  // account, or by pasting an email with different casing) stores whatever
+  // case the submitter typed.
+  return listFilter === 'mine'
+    ? allTickets.filter(function(t){ return (t.requesterEmail || '').toLowerCase() === session.email; })
+    : allTickets;
+}
+
+function renderTicketList(){
+  // Label mirrors the filename below -- a "My tickets" export should never
+  // look identical to a full-domain one at a glance.
+  document.getElementById('export-csv-btn').textContent = listFilter === 'mine' ? 'Export CSV (My tickets)' : 'Export CSV';
+  const tbody = document.getElementById('tickets-tbody');
+  const tickets = filteredTickets();
+  if (!tickets.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="5">' +
+      (allTickets.length ? "No tickets you've filed yet." : 'No tickets found for your organization yet.') +
+      '</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tickets.map(function(t){
+    return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
+      '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
+      '<td>' + escapeHtml(t.requesterName || '—') + '</td>' +
+      '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
+      '<td>' + t.priority + '</td>' +
+      '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
+    '</tr>';
+  }).join('');
+  Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
+    tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
+  });
+}
+
 async function loadTicketList(){
   showView('list-view');
   document.getElementById('list-context').textContent = session.name + ' — ' + session.domain;
   const tbody = document.getElementById('tickets-tbody');
   tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Loading…</td></tr>';
+  // Disabled for the duration of this fetch (and left disabled on
+  // failure) so a click can't repaint/export whatever allTickets still
+  // holds from a previous load while this one is in flight or has failed.
+  setTicketListControlsEnabled(false);
   try {
     const data = await orgFetch('/tickets');
-    const tickets = data.tickets || [];
-    if (!tickets.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No tickets found for your organization yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = tickets.map(function(t){
-      return '<tr data-id="' + escapeHtml(t.ticketId) + '">' +
-        '<td class="subject-cell">' + escapeHtml(t.subject) + '</td>' +
-        '<td>' + escapeHtml(t.requesterName || '—') + '</td>' +
-        '<td><span class="badge badge-' + t.status + '">' + t.status + '</span></td>' +
-        '<td>' + t.priority + '</td>' +
-        '<td class="updated-cell">' + relativeTime(t.updatedAt) + '</td>' +
-      '</tr>';
-    }).join('');
-    Array.prototype.forEach.call(tbody.querySelectorAll('tr[data-id]'), function(tr){
-      tr.addEventListener('click', function(){ openTicket(tr.dataset.id); });
-    });
+    allTickets = data.tickets || [];
+    setTicketListControlsEnabled(true);
+    renderTicketList();
   } catch (e) {
     if (e.status === 401 || e.status === 403) {
       forgetSession('Your session has expired or your organization\'s portal access has changed. Please sign in again.');
       return;
     }
+    allTickets = [];
     tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Failed to load tickets: ' + escapeHtml(e.message) + '</td></tr>';
   }
 }
+
+document.getElementById('list-filter').addEventListener('click', function(e){
+  const btn = e.target.closest('.list-filter-btn');
+  if (!btn) return;
+  listFilter = btn.dataset.filter;
+  Array.prototype.forEach.call(this.querySelectorAll('.list-filter-btn'), function(b){
+    b.classList.toggle('active', b === btn);
+  });
+  renderTicketList();
+});
+
+// Same formula-injection guard as staff.html's own CSV export (a leading
+// =/+/-/@ gets a quote prefixed so Excel/Sheets can't interpret a
+// client-submitted subject/name as a formula).
+function csvCell(v){
+  v = String(v == null ? '' : v);
+  if (/^[=+\-@]/.test(v)) v = "'" + v;
+  return '"' + v.replace(/"/g, '""') + '"';
+}
+
+document.getElementById('export-csv-btn').addEventListener('click', function(){
+  const cols = ['ticketId', 'subject', 'category', 'requesterName', 'requesterEmail', 'status', 'priority', 'rating', 'createdAt', 'updatedAt'];
+  const lines = [cols.map(csvCell).join(',')].concat(filteredTickets().map(function(t){
+    return cols.map(function(c){ return csvCell(t[c]); }).join(',');
+  }));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // Filename spells out which filter was active -- a report exported
+  // while "My tickets" was on and later forwarded should never read as
+  // the whole domain's ticket history.
+  a.download = 'org-tickets-' + listFilter + '-' + session.domain + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
 
 let currentTicketId = null;
 
@@ -592,6 +703,14 @@ async function openTicket(id){
     const badge = document.getElementById('d-status-badge');
     badge.textContent = t.status;
     badge.className = 'badge badge-' + t.status;
+
+    const ratingCard = document.getElementById('rating-card');
+    if (t.status === 'Resolved' || t.status === 'Closed') {
+      ratingCard.style.display = 'block';
+      showRatingState(t.rating, t.ratedByName);
+    } else {
+      ratingCard.style.display = 'none';
+    }
 
     const thread = document.getElementById('thread');
     thread.innerHTML = (t.messages || []).map(function(m){
@@ -611,6 +730,37 @@ async function openTicket(id){
     document.getElementById('thread').innerHTML = 'Failed to load ticket: ' + escapeHtml(e.message);
   }
 }
+
+// ── Satisfaction rating (mirrors track.html's individual-portal version,
+// but any teammate on the domain can rate any of the team's tickets --
+// unlike the individual portal, more than one person could plausibly have
+// rated it, so who is shown alongside what) ──
+function showRatingState(rating, ratedByName){
+  document.getElementById('rating-yes-btn').classList.toggle('active', rating === 'yes');
+  document.getElementById('rating-no-btn').classList.toggle('active', rating === 'no');
+  const thanks = document.getElementById('rating-thanks');
+  if (rating) {
+    const base = rating === 'yes'
+      ? 'Thanks for the feedback — glad we could help!'
+      : "Thanks for the feedback — we'll take another look.";
+    thanks.textContent = base + (ratedByName ? ' (rated by ' + ratedByName + ')' : '');
+    thanks.style.display = 'block';
+  } else {
+    thanks.style.display = 'none';
+  }
+}
+
+async function sendRating(rating){
+  try {
+    await orgFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/rating', { method: 'POST', body: { rating: rating } });
+    showRatingState(rating, session.name);
+  } catch (e) {
+    alert('Failed to save the rating: ' + e.message);
+  }
+}
+
+document.getElementById('rating-yes-btn').addEventListener('click', function(){ sendRating('yes'); });
+document.getElementById('rating-no-btn').addEventListener('click', function(){ sendRating('no'); });
 
 // The session credential travels only as a header (see orgFetchBlob), so a
 // plain <img src>/<a href> pointed straight at the download URL -- the

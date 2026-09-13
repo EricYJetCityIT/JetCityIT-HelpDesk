@@ -34,6 +34,11 @@ function metaToJson(e) {
     assetId: e.assetId || '',
     rating: e.rating || null,
     ratedAt: e.ratedAt || null,
+    // Only ever set via the Organization Portal's shared rating (any
+    // teammate on a domain can rate any of their team's tickets) -- null
+    // for the individual client portal's rating, where there's only ever
+    // one possible rater to begin with.
+    ratedByName: e.ratedByName || null,
     totalTimeMinutes: e.totalTimeMinutes || 0,
     firstRespondedAt: e.firstRespondedAt || null,
     escalatedAt: e.escalatedAt || null,
@@ -164,7 +169,7 @@ app.http('ticketUpdate', {
           // reopening and sitting unanswered again. Resolved<->Closed is
           // not a reopen -- that's just closing the books on the same
           // resolution -- so none of this is touched by that transition.
-          if (meta.rating) { update.rating = ''; update.ratedAt = ''; }
+          if (meta.rating) { update.rating = ''; update.ratedAt = ''; update.ratedByEmail = ''; update.ratedByName = ''; }
           if (meta.resolvedAt) update.resolvedAt = '';
           if (meta.firstRespondedAt) update.firstRespondedAt = '';
           if (meta.escalatedAt) update.escalatedAt = '';

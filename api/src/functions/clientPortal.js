@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { getClient, ensureTable, genMessageRowKey } = require('../lib/tables');
+const { getClient, ensureTable, genMessageRowKey, applyTicketRating } = require('../lib/tables');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
@@ -243,7 +243,7 @@ app.http('clientTicketReply', {
           // responded to (or ever escalated) once would be permanently
           // invisible to slaEscalation.js's scan even after reopening and
           // sitting unanswered again.
-          if (meta.rating) { update.rating = ''; update.ratedAt = ''; }
+          if (meta.rating) { update.rating = ''; update.ratedAt = ''; update.ratedByEmail = ''; update.ratedByName = ''; }
           if (meta.resolvedAt) update.resolvedAt = '';
           if (meta.firstRespondedAt) update.firstRespondedAt = '';
           if (meta.escalatedAt) update.escalatedAt = '';
@@ -308,23 +308,9 @@ app.http('clientTicketRating', {
       await ensureTable();
       const table = getClient();
 
-      let meta;
-      try {
-        meta = await table.getEntity(ticketId, '0');
-      } catch (e) {
-        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
-        throw e;
-      }
-      if (normalizeEmail(meta.email) !== normalizeEmail(email)) {
-        return { status: 404, jsonBody: { error: 'Ticket not found' } };
-      }
-      if (meta.status !== 'Resolved' && meta.status !== 'Closed') {
-        throw new AuthError(400, 'This ticket has not been resolved yet.');
-      }
-
-      // Overwrite, not append -- a client can change their mind, and only
-      // the latest answer is meaningful.
-      await table.updateEntity({ partitionKey: ticketId, rowKey: '0', rating, ratedAt: new Date().toISOString() }, 'Merge');
+      const result = await applyTicketRating(table, ticketId, rating, (meta) => normalizeEmail(meta.email) === normalizeEmail(email));
+      if (result.status === 'not_found') return { status: 404, jsonBody: { error: 'Ticket not found' } };
+      if (result.status === 'not_resolved') throw new AuthError(400, 'This ticket has not been resolved yet.');
       audit(context, null, 'ticket.rate', { ticketId, rating });
 
       return { jsonBody: { ok: true } };

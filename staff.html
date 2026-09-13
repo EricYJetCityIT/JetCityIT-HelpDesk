@@ -1635,7 +1635,11 @@ async function openTicket(id){
     document.getElementById('d-company').textContent = t.company || '—';
     const ratingEl = document.getElementById('d-rating');
     ratingEl.textContent = t.rating === 'yes' ? '👍 Satisfied' : t.rating === 'no' ? '👎 Not satisfied' : '—';
-    ratingEl.title = t.ratedAt ? ('Rated ' + relativeTime(t.ratedAt)) : '';
+    // ratedByName is only ever set via the Organization Portal (any
+    // teammate on a domain can rate any of their team's tickets, so
+    // knowing which one matters there); the individual client portal's
+    // rating has only ever one possible rater, so it's always null there.
+    ratingEl.title = t.ratedAt ? ('Rated ' + relativeTime(t.ratedAt) + (t.ratedByName ? ' by ' + t.ratedByName : '')) : '';
     document.getElementById('d-time').textContent = t.totalTimeMinutes ? formatMinutes(t.totalTimeMinutes) : '—';
     document.getElementById('d-sla').textContent = slaStatusText(t);
     document.getElementById('d-status').value = t.status;

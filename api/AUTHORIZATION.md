@@ -252,6 +252,45 @@ not a generic "you" — since more than one teammate can post into the same
 thread, unlike the individual portal where there's only ever one person on
 the other end.
 
+**A teammate can also rate a resolved ticket** (`POST /api/org/tickets/{id}/rating`,
+`{rating: 'yes'|'no'}`) — shares the individual client portal's
+`clientTicketRating` fetch/status-gate/merge core via a new
+`applyTicketRating` helper (`api/src/lib/tables.js`), supplying only its
+own ownership predicate (a domain match here, not an email+token pair)
+and its own audit action. Same 400 if the ticket isn't Resolved/Closed
+yet, same "overwrite, not append" semantics so changing your mind just
+replaces the answer.
+
+Any teammate on the domain can rate any of the team's tickets — a
+deliberate extension of the shared reply/view model already used
+everywhere else on this surface (any teammate can already reply to, or
+view attachments on, any ticket the team filed), not an oversight: these
+are internal IT tickets a team resolves together, not a public CSAT
+survey, so team consensus is treated as an acceptable substitute for
+exactly one person's opinion. Unlike a reply (already attributed via
+`authorName`), a rating with no attribution would let one teammate
+silently overwrite another's answer with no record of who or that it
+changed — so the rating also stores `ratedByEmail`/`ratedByName`
+(`extraFields` on `applyTicketRating`), shown alongside the rating in
+both the org portal and the staff console. A reply already clears a
+stale rating (and now its attribution) on reopen, in all three places a
+reopen can happen (`orgTicketReply`, `clientTicketReply`, staff's own
+`ticketUpdate`), so this never shows a rating — or a name — that no
+longer reflects the ticket's current state.
+
+`GET /api/org/tickets` also now returns each ticket's `requesterEmail`
+(alongside the existing `requesterName`) so the frontend can offer a "My
+tickets" filter without a second round trip — no new exposure, since
+every teammate can already see who filed each ticket. The filter's active
+state is reflected in the "Export CSV" button's own label and the
+downloaded filename (`org-tickets-mine-...` vs `org-tickets-all-...`), so
+an export taken while filtered can't be mistaken later for the whole
+domain's history. Both the filter and export controls are disabled
+whenever the ticket list isn't in a known-fresh state (a fetch in flight,
+a failed non-auth fetch, or immediately after sign-out) — otherwise a
+stray click could repaint a stale or even a different, previously
+signed-in organization's cached ticket data on a shared workstation.
+
 **Signup always returns the same generic `{ok:true}`** regardless of
 whether the email is brand new, already has an unverified account (which
 just resends the verification email), or already has a verified one —
@@ -875,4 +914,22 @@ no concept of updating an existing one by id, even if the file includes an
   generic response is unchanged). An
   account's last-sign-in timestamp updates after a fresh sign-in but
   survives a disable/re-enable cycle (unlike sessionIssuedAt, which is
-  cleared by it).
+  cleared by it). Rate a Resolved ticket 👍/👎 → the choice is saved,
+  highlighted next time the ticket is opened, and shows who rated it; have
+  a second teammate change the same ticket's rating → the name updates to
+  them (only the latest answer + its rater are kept). Try rating an Open
+  ticket directly via the API → 400, not silently accepted. Reply to a
+  rated, Resolved ticket → it reopens, the rating card disappears, and the
+  rating + rater are cleared server-side (check via the staff console that
+  neither lingers). Toggle "My tickets" → only tickets whose requester
+  email matches the signed-in account remain, including one filed via the
+  old public form with different email casing; toggle back to "All
+  tickets" to see the full shared list again. Export CSV while "My
+  tickets" is active → the button reads "Export CSV (My tickets)" and the
+  downloaded filename/contents reflect that filter, not the whole domain.
+  Trigger a non-auth ticket-list load failure (e.g. throttle the network)
+  → the filter and export buttons are disabled, not just showing an error,
+  so a stray click can't repaint stale data over the error message; sign
+  out and back in as a different organization on the same tab → the
+  previous org's tickets never flash on screen before the new load
+  completes.

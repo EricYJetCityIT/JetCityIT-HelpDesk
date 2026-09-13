@@ -22,7 +22,7 @@ const {
   getAccount,
 } = require('../lib/orgUsers');
 const { sendVerificationEmail } = require('../lib/orgEmails');
-const { getClient: getTicketsClient, ensureTable: ensureTicketsTable, genMessageRowKey, recordActivity } = require('../lib/tables');
+const { getClient: getTicketsClient, ensureTable: ensureTicketsTable, genMessageRowKey, recordActivity, applyTicketRating } = require('../lib/tables');
 const { findTicketsByDomain } = require('../lib/clientAccess');
 const { createTicket } = require('../lib/ticketCreation');
 const {
@@ -94,7 +94,15 @@ function ticketToOrgJson(e) {
     // one -- this is the one field that genuinely differs from
     // clientPortal.js's ticketToClientJson, so it isn't reused as-is.
     requesterName: e.name,
+    // Lets the frontend offer a "my tickets" filter without a second API
+    // round trip -- no new exposure since every teammate on this domain
+    // can already see requesterName for every ticket in the shared list.
+    requesterEmail: e.email,
     rating: e.rating || null,
+    // Who rated it -- unlike the individual portal, more than one teammate
+    // could plausibly rate the same ticket, so the ticket itself needs to
+    // say who, not just what.
+    ratedByName: e.ratedByName || null,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -705,7 +713,7 @@ app.http('orgTicketReply', {
         const update = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
         if (meta.status !== 'Open') {
           update.status = 'Open';
-          if (meta.rating) { update.rating = ''; update.ratedAt = ''; }
+          if (meta.rating) { update.rating = ''; update.ratedAt = ''; update.ratedByEmail = ''; update.ratedByName = ''; }
           if (meta.resolvedAt) update.resolvedAt = '';
           if (meta.firstRespondedAt) update.firstRespondedAt = '';
           if (meta.escalatedAt) update.escalatedAt = '';
@@ -729,6 +737,63 @@ app.http('orgTicketReply', {
       }
 
       return { status: 201, jsonBody: { ok: true } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// Same 1-tap Yes/No satisfaction rating as the individual client portal's
+// clientTicketRating -- shares that endpoint's fetch/status-gate/merge
+// core via applyTicketRating (../lib/tables.js), supplying only its own
+// ownership predicate (a domain match here, not an email+token pair) and
+// its own audit action. Any teammate on the domain can rate any ticket,
+// deliberately extending the same shared reply/view model this whole file
+// already uses (any teammate can already reply to, or view attachments
+// on, any ticket the team filed) rather than narrowing ratings to "only
+// the original requester" -- these are internal IT tickets a team
+// resolves together, not a public CSAT survey, so team consensus is an
+// acceptable substitute for exactly one person's opinion. The real risk
+// that model raises -- one teammate silently overwriting another's
+// answer with no record of who did it or that it changed -- is mitigated
+// by storing ratedByEmail/ratedByName (via applyTicketRating's
+// extraFields), unlike the individual portal's rating, which has no such
+// ambiguity to begin with (there's only ever one possible rater).
+app.http('orgTicketRating', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'org/tickets/{ticketId}/rating',
+  handler: async (request, context) => {
+    try {
+      const ip = clientIp(request);
+      const rl = checkRateLimit('org-rating-ip:' + ip, 20, 60 * 1000);
+      if (!rl.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
+      }
+
+      const creds = readOrgCreds(request);
+      const session = await requireOrgSession(creds.email, creds.sessionToken);
+
+      const body = await request.json().catch(() => ({}));
+      const rating = String(body.rating || '');
+      if (rating !== 'yes' && rating !== 'no') throw new AuthError(400, 'Invalid rating');
+
+      const { ticketId } = request.params;
+      await ensureTicketsTable();
+      const table = getTicketsClient();
+
+      const result = await applyTicketRating(
+        table,
+        ticketId,
+        rating,
+        (meta) => emailDomain(meta.email) === session.domain,
+        { ratedByEmail: session.email, ratedByName: session.name }
+      );
+      if (result.status === 'not_found') return { status: 404, jsonBody: { error: 'Ticket not found' } };
+      if (result.status === 'not_resolved') throw new AuthError(400, 'This ticket has not been resolved yet.');
+      audit(context, null, 'ticket.orgRate', { ticketId, domain: session.domain, rating });
+
+      return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

@@ -31,9 +31,12 @@ async function sendVerificationEmail(name, email, domain, context) {
   }
 }
 
-// Staff-triggered only (api/src/functions/orgAdmin.js) -- there's no
-// self-service "forgot password" entry point yet, so this is currently the
-// only way a locked-out user gets back in short of a brand-new signup.
+// Staff-triggered (api/src/functions/orgAdmin.js), or dispatched on staff's
+// behalf after a self-service "Forgot your password?" ticket comes in.
+// Returns whether the email actually sent -- the caller uses this to decide
+// whether it's honest to clear a pending "reset requested" flag; the
+// generic {ok:true} response it returns to its own caller is unaffected
+// either way, same as every other best-effort email in this app.
 async function sendPasswordResetEmail(name, email, domain, context) {
   const resetToken = genToken();
   await ensureTable();
@@ -46,8 +49,10 @@ async function sendPasswordResetEmail(name, email, domain, context) {
 <p>If you didn't expect this, contact Jet City IT before using the link.</p>
 <p>— Jet City IT Help Desk</p>`;
     await sendMail({ from: SUPPORT_MAILBOX, to: email, subject: 'Reset your Jet City IT organization portal password', html });
+    return true;
   } catch (e) {
     context.log('ORG_RESET_EMAIL_FAILED ' + JSON.stringify({ email, error: e.message }));
+    return false;
   }
 }
 

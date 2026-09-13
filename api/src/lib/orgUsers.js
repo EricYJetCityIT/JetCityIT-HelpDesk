@@ -111,19 +111,30 @@ async function isDomainEnabled(domain) {
   }
 }
 
-async function setDomainEnabled(domain, enabled, staffUpn) {
+// `note` is optional and left untouched (not cleared) when omitted -- lets
+// callers flip enabled/disabled without needing to resend the existing
+// note every time, and lets a note be edited on its own without touching
+// enabled state either.
+async function setDomainEnabled(domain, enabled, staffUpn, note) {
   await ensureTable();
   const table = getClient();
-  await table.upsertEntity(
-    {
-      partitionKey: domain,
-      rowKey: ENABLED_ROW_KEY,
-      enabled: !!enabled,
-      updatedBy: staffUpn || '',
-      updatedAt: new Date().toISOString(),
-    },
-    'Merge'
-  );
+  const update = {
+    partitionKey: domain,
+    rowKey: ENABLED_ROW_KEY,
+    enabled: !!enabled,
+    updatedBy: staffUpn || '',
+    updatedAt: new Date().toISOString(),
+  };
+  // Stamped separately from updatedBy/updatedAt above -- those track the
+  // enable/disable toggle specifically, and a note edit shouldn't make
+  // that pair ambiguous between "someone changed access" and "someone
+  // just left a comment."
+  if (note !== undefined) {
+    update.note = String(note || '').trim().slice(0, 300);
+    update.noteBy = staffUpn || '';
+    update.noteAt = new Date().toISOString();
+  }
+  await table.upsertEntity(update, 'Merge');
 }
 
 // Disabling/re-enabling one account -- the reversible, per-person
@@ -145,6 +156,11 @@ async function setAccountDisabled(domain, email, disabled, staffUpn) {
   if (disabled) {
     update.sessionToken = '';
     update.sessionIssuedAt = '';
+    // A disabled account can't sign in regardless of whether they still
+    // need a password reset, so a "reset requested" flag stops meaning
+    // anything actionable the moment the account is cut off -- clear it
+    // rather than leaving a stale badge in the admin view.
+    update.resetRequestedAt = '';
   }
   await table.updateEntity(update, 'Merge');
 }
@@ -188,10 +204,13 @@ async function listAllDomainsWithAccounts() {
   const byDomain = new Map();
   for await (const e of table.listEntities({ queryOptions: {} })) {
     const domain = e.partitionKey;
-    if (!byDomain.has(domain)) byDomain.set(domain, { domain, enabled: false, accounts: [] });
+    if (!byDomain.has(domain)) byDomain.set(domain, { domain, enabled: false, note: '', noteBy: '', noteAt: '', accounts: [] });
     const entry = byDomain.get(domain);
     if (e.rowKey === ENABLED_ROW_KEY) {
       entry.enabled = !!e.enabled;
+      entry.note = e.note || '';
+      entry.noteBy = e.noteBy || '';
+      entry.noteAt = e.noteAt || '';
     } else {
       entry.accounts.push({
         email: e.rowKey,
@@ -199,6 +218,8 @@ async function listAllDomainsWithAccounts() {
         verified: !!e.verified,
         disabled: !!e.disabled,
         createdAt: e.createdAt,
+        lastSignInAt: e.lastSignInAt || '',
+        resetRequestedAt: e.resetRequestedAt || '',
       });
     }
   }

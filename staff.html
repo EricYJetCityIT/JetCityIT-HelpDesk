@@ -2415,23 +2415,41 @@ function renderOrgDomains(domains){
   }
   container.innerHTML = domains.map(function(d){
     const accountsHtml = d.accounts.length
-      ? '<table style="margin-top:8px"><thead><tr><th>Name</th><th>Email</th><th>Verified</th><th>Status</th><th>Signed up</th><th></th></tr></thead><tbody>' +
+      ? '<table style="margin-top:8px"><thead><tr><th></th><th>Name</th><th>Email</th><th>Verified</th><th>Status</th><th>Signed up</th><th>Last sign-in</th><th></th></tr></thead><tbody>' +
         d.accounts.map(function(a){
-          return '<tr><td>' + escapeHtml(a.name || '—') + '</td><td>' + escapeHtml(a.email) + '</td>' +
+          const resetFlag = a.resetRequestedAt
+            ? ' <span style="color:var(--amber)" title="Requested ' + escapeHtml(relativeTime(a.resetRequestedAt)) + '">⚠ reset requested</span>'
+            : '';
+          const resendBtn = a.verified ? '' :
+            '<button type="button" class="org-resend-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Resend verification</button> ';
+          return '<tr>' +
+            '<td><input type="checkbox" class="org-acct-check" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '"/></td>' +
+            '<td>' + escapeHtml(a.name || '—') + '</td><td>' + escapeHtml(a.email) + '</td>' +
             '<td>' + (a.verified ? '✅' : '⏳ pending') + '</td>' +
-            '<td>' + (a.disabled ? '🚫 Disabled' : '✅ Active') + '</td>' +
+            '<td>' + (a.disabled ? '🚫 Disabled' : '✅ Active') + resetFlag + '</td>' +
             '<td class="updated-cell">' + (a.createdAt ? relativeTime(a.createdAt) : '—') + '</td>' +
+            '<td class="updated-cell">' + (a.lastSignInAt ? relativeTime(a.lastSignInAt) : '—') + '</td>' +
             '<td style="white-space:nowrap">' +
+              resendBtn +
               '<button type="button" class="org-resetpw-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Reset password</button> ' +
               '<button type="button" class="org-disable-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '" data-disabled="' + a.disabled + '">' + (a.disabled ? 'Enable' : 'Disable') + '</button> ' +
               '<button type="button" class="org-remove-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-email="' + escapeHtml(a.email) + '">Remove</button>' +
             '</td></tr>';
-        }).join('') + '</tbody></table>'
+        }).join('') + '</tbody></table>' +
+        '<div style="margin-top:8px;display:flex;gap:8px">' +
+          '<button type="button" class="org-bulk-disable-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '">Disable selected</button>' +
+          '<button type="button" class="org-bulk-remove-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '">Remove selected</button>' +
+        '</div>'
       : '<p style="color:var(--text3);font-size:13px;margin-top:8px">No one has signed up yet.</p>';
-    return '<div class="table-card" style="margin-bottom:14px;padding:14px 16px">' +
+    const noteAuthorHtml = d.note && d.noteBy ? ' <span style="color:var(--text3)">— ' + escapeHtml(d.noteBy) + (d.noteAt ? ', ' + escapeHtml(relativeTime(d.noteAt)) : '') + '</span>' : '';
+    const noteHtml = d.note ? '<p style="color:var(--text3);font-size:12px;margin-top:4px">📝 ' + escapeHtml(d.note) + noteAuthorHtml + '</p>' : '';
+    return '<div class="table-card" style="margin-bottom:14px;padding:14px 16px" data-domain-card="' + escapeHtml(d.domain) + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
-        '<div><strong>' + escapeHtml(d.domain) + '</strong> <span class="badge ' + (d.enabled ? 'badge-Open' : 'badge-Closed') + '">' + (d.enabled ? 'Enabled' : 'Disabled') + '</span></div>' +
-        '<button type="button" class="org-toggle-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-enabled="' + d.enabled + '">' + (d.enabled ? 'Disable' : 'Enable') + '</button>' +
+        '<div><strong>' + escapeHtml(d.domain) + '</strong> <span class="badge ' + (d.enabled ? 'badge-Open' : 'badge-Closed') + '">' + (d.enabled ? 'Enabled' : 'Disabled') + '</span>' + noteHtml + '</div>' +
+        '<div style="display:flex;gap:8px">' +
+          '<button type="button" class="org-note-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-note="' + escapeHtml(d.note || '') + '">📝 Note</button>' +
+          '<button type="button" class="org-toggle-btn recurring-nav-btn" data-domain="' + escapeHtml(d.domain) + '" data-enabled="' + d.enabled + '">' + (d.enabled ? 'Disable' : 'Enable') + '</button>' +
+        '</div>' +
       '</div>' + accountsHtml +
     '</div>';
   }).join('');
@@ -2442,6 +2460,71 @@ document.getElementById('org-domains-list').addEventListener('click', async func
   const removeBtn = e.target.closest('.org-remove-btn');
   const resetPwBtn = e.target.closest('.org-resetpw-btn');
   const disableBtn = e.target.closest('.org-disable-btn');
+  const resendBtn = e.target.closest('.org-resend-btn');
+  const noteBtn = e.target.closest('.org-note-btn');
+  const bulkDisableBtn = e.target.closest('.org-bulk-disable-btn');
+  const bulkRemoveBtn = e.target.closest('.org-bulk-remove-btn');
+  if (resendBtn) {
+    const domain = resendBtn.dataset.domain;
+    const email = resendBtn.dataset.email;
+    resendBtn.disabled = true;
+    try {
+      await apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email) + '/resend-verification', { method: 'POST' });
+      // Best-effort server-side (a Graph/mail outage is only logged, never
+      // surfaced here) -- worded to not overpromise delivery, same as the
+      // "Reset password" button's alert below.
+      alert('Verification email requested for ' + email + '. If their mailbox is reachable, they should receive a link shortly.');
+    } catch (err) {
+      alert('Failed to resend: ' + err.message);
+    } finally {
+      resendBtn.disabled = false;
+    }
+    return;
+  }
+  if (noteBtn) {
+    const domain = noteBtn.dataset.domain;
+    const note = prompt('Internal note for ' + domain + ' (staff-only, not shown to the client):', noteBtn.dataset.note || '');
+    if (note === null) return;
+    noteBtn.disabled = true;
+    try {
+      // enabled is deliberately omitted -- the server looks up the
+      // domain's current value itself when it's not sent, so a note-only
+      // save can never accidentally flip access on or off based on a
+      // stale copy of this page.
+      await apiFetch('/org/admin/domains/' + encodeURIComponent(domain), { method: 'POST', body: JSON.stringify({ note: note }) });
+      loadOrgDomains();
+    } catch (err) {
+      alert('Failed to save note: ' + err.message);
+      noteBtn.disabled = false;
+    }
+    return;
+  }
+  if (bulkDisableBtn || bulkRemoveBtn) {
+    const btn = bulkDisableBtn || bulkRemoveBtn;
+    const domain = btn.dataset.domain;
+    const card = btn.closest('[data-domain-card]');
+    const checked = Array.from(card.querySelectorAll('.org-acct-check:checked')).map(function(c){ return c.dataset.email; });
+    if (!checked.length) { alert('Select at least one account first.'); return; }
+    const verb = bulkDisableBtn ? 'disable' : 'permanently remove';
+    if (!confirm('Really ' + verb + ' ' + checked.length + ' account(s) on ' + domain + '?')) return;
+    btn.disabled = true;
+    try {
+      // Loops the existing single-account endpoints (Promise.allSettled,
+      // same pattern as the ticket list's own bulk actions) rather than a
+      // new bulk API -- one bad email in the batch doesn't block the rest.
+      const results = await Promise.allSettled(checked.map(function(email){
+        return bulkDisableBtn
+          ? apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email), { method: 'POST', body: JSON.stringify({ disabled: true }) })
+          : apiFetch('/org/admin/domains/' + encodeURIComponent(domain) + '/accounts/' + encodeURIComponent(email), { method: 'DELETE' });
+      }));
+      const failed = results.filter(function(r){ return r.status === 'rejected'; }).length;
+      if (failed) alert(failed + ' of ' + checked.length + ' failed -- the rest succeeded.');
+      loadOrgDomains();
+    } finally {
+      btn.disabled = false;
+    }
+    return;
+  }
   if (resetPwBtn) {
     const domain = resetPwBtn.dataset.domain;
     const email = resetPwBtn.dataset.email;

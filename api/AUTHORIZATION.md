@@ -151,14 +151,51 @@ two different ways depending on whether it should be reversible:
   request, not just at login). Re-enabling needs no re-signup.
 
 Both are separate from `setDomainEnabled`, which acts on an entire client
-domain at once rather than one person. All three account-level actions
-(delete, disable/enable, reset-password) share one `resolveAccountAction`
-helper (`orgAdmin.js`) that validates the URL, confirms the account
-actually belongs to the named domain, and applies a per-account rate limit
-(10/hour) — the same protection every anonymous org/* endpoint already has
-via a per-IP + per-email `checkRateLimit` pair, extended here so a
-compromised staff session (or a careless script looping over accounts)
-can't hammer one target account through the admin surface either.
+domain at once rather than one person. All four account-level actions
+(delete, disable/enable, reset-password, resend-verification — below)
+share one `resolveAccountAction` helper (`orgAdmin.js`) that validates the
+URL, confirms the account actually belongs to the named domain, and
+applies a per-account rate limit (10/hour) — the same protection every
+anonymous org/* endpoint already has via a per-IP + per-email
+`checkRateLimit` pair, extended here so a compromised staff session (or a
+careless script looping over accounts) can't hammer one target account
+through the admin surface either. The admin view also offers "Disable
+selected"/"Remove selected" bulk actions across several checked accounts
+at once — these loop the same two single-account endpoints via
+`Promise.allSettled` rather than a new bulk API, so one bad email in a
+batch doesn't block the rest.
+
+**Staff can resend the signup verification email**
+(`POST /api/org/admin/domains/{domain}/accounts/{email}/resend-verification`,
+shown only next to unverified accounts) for someone whose original link
+expired or got lost, without waiting on them to find the self-service
+"Didn't get a verification email?" link themselves. 400s if the account is
+already verified.
+
+**The admin view also surfaces, per domain:** an optional staff-only
+`note` (up to 300 characters, stamped with who wrote it and when,
+separately from the domain's own enabled-toggle audit fields so editing a
+note can never be confused with changing access) — settable via
+`POST /api/org/admin/domains/{domain}` alongside or independently of
+`enabled` (a note-only save omits `enabled` entirely; the server looks up
+the domain's *current* value itself rather than trusting a value the
+client might resend from a stale page load, closing a real bug caught by
+this phase's review: three of six review angles independently found that
+sending a stale `enabled` value alongside a note could silently flip a
+domain's access as a side effect of an unrelated edit); and per account, a
+`lastSignInAt` timestamp (distinct from the shorter-lived
+`sessionIssuedAt` — this one persists across disable/reset/logout, so it
+keeps meaning "the last time this person actually signed in" even after
+the current session is invalidated) and a `resetRequestedAt` flag (shown
+as a "⚠ reset requested" badge), set when the self-service
+"Forgot your password?" flow below actually finds and files a ticket for
+a real account, and cleared when: staff send a reset email that actually
+sends (not merely attempted — `sendPasswordResetEmail` now returns
+whether the send succeeded, so a silent mail-outage doesn't make the flag
+vanish while the person is still locked out); the account signs in again
+on its own; the account completes a reset; or staff disable the account
+(a disabled account can't sign in regardless of whether a reset is
+pending, so the flag stops being actionable).
 
 **Staff can also trigger a password reset for one account**
 (`POST /api/org/admin/domains/{domain}/accounts/{email}/reset-password`,

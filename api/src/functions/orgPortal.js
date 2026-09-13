@@ -335,6 +335,22 @@ app.http('orgRequestPasswordReset', {
         auditExtra: { domain, ip, source: 'org.requestPasswordReset' },
       });
       await recordActivity(getTicketsClient(), ticketId, 'Self-service password reset request -- use "Reset password" in Organization Portal admin to fulfill.');
+      // Surfaces on the account row in the admin view itself, not just
+      // buried in the ticket queue -- so a staff member scanning the
+      // Organization Portal admin list can see who's waiting without
+      // needing to separately notice a matching ticket. Best-effort and
+      // isolated from the response: the ticket is already fully created
+      // and both notification emails already sent by this point, so a
+      // hiccup on this bookkeeping write (or the account row having been
+      // deleted in the interim) must never turn an already-successful
+      // request into a reported failure -- that would just invite a
+      // retry that piles up a duplicate ticket.
+      try {
+        await ensureTable();
+        await getClient().updateEntity({ partitionKey: domain, rowKey: email, resetRequestedAt: new Date().toISOString() }, 'Merge');
+      } catch (e) {
+        context.log('ORG_SET_RESET_FLAG_FAILED ' + JSON.stringify({ domain, email, error: e.message }));
+      }
       return { jsonBody: { ok: true } };
     } catch (e) {
       context.error(e);
@@ -385,7 +401,7 @@ app.http('orgResetPassword', {
       // session from before the reset (e.g. on a device that prompted it)
       // still valid.
       await getClient().updateEntity(
-        { partitionKey: domain, rowKey: email, passwordHash, resetToken: '', sessionToken: '', sessionIssuedAt: '' },
+        { partitionKey: domain, rowKey: email, passwordHash, resetToken: '', sessionToken: '', sessionIssuedAt: '', resetRequestedAt: '' },
         'Merge'
       );
 
@@ -433,8 +449,16 @@ app.http('orgLogin', {
       if (!domainEnabled) throw new AuthError(403, 'Organization portal access is not currently enabled for this organization.');
 
       const sessionToken = genToken();
+      const now = new Date().toISOString();
       await ensureTable();
-      await getClient().updateEntity({ partitionKey: domain, rowKey: email, sessionToken, sessionIssuedAt: new Date().toISOString() }, 'Merge');
+      // resetRequestedAt cleared here too -- a successful sign-in (with
+      // whatever password they used) means the account is no longer
+      // actually locked out, so a stale flag shouldn't keep showing in the
+      // admin view as if a reset were still pending.
+      await getClient().updateEntity(
+        { partitionKey: domain, rowKey: email, sessionToken, sessionIssuedAt: now, lastSignInAt: now, resetRequestedAt: '' },
+        'Merge'
+      );
 
       audit(context, null, 'org.login', { domain });
       return { jsonBody: { name: account.name, domain, sessionToken } };

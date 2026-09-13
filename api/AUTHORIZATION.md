@@ -262,11 +262,32 @@ learn which coworkers at an enabled domain have already signed up.
 **Known gaps, accepted for now**: no permanent brute-force lockout beyond the existing
 per-IP/per-email rate limiting (an in-memory fixed-window counter, same as
 every other rate limit in this app — a determined attacker could still
-grind through guesses across many windows over time, just slowly); and no
-way for a team-portal account to submit a brand new ticket (only view/
-reply to ones that already exist). Both remaining gaps are flagged as
-possible fast-follows, deliberately left out of this pass to keep it
-scoped to what was actually asked for.
+grind through guesses across many windows over time, just slowly).
+
+**A signed-in org account can also file a brand-new ticket**
+(`POST /api/org/tickets`, `{subject, description, category?, attachments?}`)
+— not just view/reply to ones that already exist. Reuses the same
+`createTicket` path (and therefore the same auto-assignment and staff
+notification email) as the public form and `request-password-reset`, but
+with `notifyRequester: false` — unlike those two callers, this requester
+is already signed into a live view of the exact ticket they just filed, so
+the usual confirmation + individual tracking-link email would be
+redundant (and would otherwise mint that requester a separate, weaker
+per-person credential they never asked for). `name`/`email`/`company`
+always come from the authenticated session (never the request body), so
+there's no way to file a ticket as someone else, and a
+`recordActivity` note ("Filed via Organization Portal by {name}
+({domain})") is added so staff can tell it apart from an anonymous public
+submission from the ticket itself. `requireOrgSession` is the entire
+authorization check — no honeypot or IP-only anti-abuse needed the way
+the anonymous public form needs, since a valid session already proves
+this is a verified person at a currently-enabled domain. Rate-limited the
+same as `orgTicketReply` (10/min per IP, since both are
+session-authenticated writes with attachments). `company` is set to the
+raw domain (e.g. `fredhutch.org`), same as everywhere else in this app
+that identifies a client by domain (Assets, the admin view) — a known,
+accepted cosmetic mismatch against the public form's free-text company
+field for the same real-world client.
 
 **Adversarial security review** (high effort, 10 findings confirmed and
 fixed before this shipped): the domain-move-style duplicate-row class of
@@ -832,4 +853,26 @@ no concept of updating an existing one by id, even if the file includes an
   have since disabled → same generic response every time, but no ticket
   is created (check the staff queue). Click it more than 3 times in
   an hour for the same email → later clicks still show the generic
-  message, but stop actually filing new tickets.
+  message, but stop actually filing new tickets. Sign in and click "＋ New
+  ticket" → subject/description/category submit as a real ticket,
+  auto-assigned and staff-notified the same as the public form, attributed
+  to the signed-in person's real name/email and their organization's
+  domain as "company"; it immediately shows up in the shared ticket list
+  for any other teammate on the same domain, and its activity trail (staff
+  console only) shows "Filed via Organization Portal by ..." — unlike the
+  public form and "Forgot your password?", the requester does NOT get a
+  separate confirmation/tracking-link email, since they're already looking
+  at the ticket in the portal. Staff admin view: leave a note on a
+  domain, then have a second (unrefreshed) tab try enabling/disabling that
+  same domain → the toggle still only changes what that tab actually
+  clicked, never silently reverted by an unrelated note save elsewhere.
+  Staff click the admin view's "Resend verification" for an account, then
+  click it again after they've verified → 400 "already verified," not a
+  silently-resent email (this is distinct from the self-service, anonymous
+  `/api/org/resend-verification` used by the sign-in page's own "Didn't
+  get a verification email?" link, which always returns the same generic
+  `{ok:true}` regardless of account state — that one's enumeration-safe
+  generic response is unchanged). An
+  account's last-sign-in timestamp updates after a fresh sign-in but
+  survives a disable/re-enable cycle (unlike sessionIssuedAt, which is
+  cleared by it).

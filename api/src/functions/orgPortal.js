@@ -521,6 +521,83 @@ app.http('orgTicketsList', {
   },
 });
 
+// Lets a signed-in org account file a brand-new ticket on their own
+// organization's behalf, rather than only viewing/replying to ones that
+// already exist -- reuses the same createTicket path (and therefore the
+// same auto-assignment and staff notification email) as the public form
+// and the password-reset-request flow, but with notifyRequester:false --
+// unlike those two, this requester is already signed into a live view of
+// this exact ticket, so the usual confirmation + tracking-link email
+// would just be redundant. requireOrgSession is the entire authorization
+// boundary here (no separate honeypot/category-of-caller distinction is
+// needed the way the anonymous public form needs one): a valid session
+// already proves this is a verified person at an enabled domain, so
+// name/email/company come from the session, never the request body.
+app.http('orgTicketCreate', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'org/tickets',
+  handler: async (request, context) => {
+    try {
+      const ip = clientIp(request);
+      // Same 10/min-per-IP budget as orgTicketReply -- both are
+      // session-authenticated writes with attachments, so the same abuse
+      // shape (a compromised account, or several people behind one office
+      // NAT) applies equally to both.
+      const rl = checkRateLimit('org-ticketcreate-ip:' + ip, 10, 60 * 1000);
+      if (!rl.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) }, jsonBody: { error: 'Too many requests.' } };
+      }
+
+      const tooLarge = rejectIfTooLarge(request);
+      if (tooLarge) return tooLarge;
+
+      const creds = readOrgCreds(request);
+      const session = await requireOrgSession(creds.email, creds.sessionToken);
+
+      const body = await request.json().catch(() => ({}));
+      const subject = String(body.subject || '').trim();
+      const description = String(body.description || '').trim();
+      if (!subject || !description) throw new AuthError(400, 'Subject and description are required.');
+
+      let ticketId;
+      try {
+        ticketId = await createTicket({
+          name: session.name,
+          email: session.email,
+          company: session.domain,
+          subject,
+          description,
+          category: body.category,
+          attachments: body.attachments,
+          context,
+          auditExtra: { domain: session.domain, source: 'org.ticketCreate' },
+          // The requester is already signed into the org portal and sees
+          // this ticket in their shared list immediately -- the usual
+          // confirmation + individual tracking-link email would just be
+          // redundant (and mint a separate, weaker per-person credential
+          // nobody asked for), unlike the public form or a password-reset
+          // request, where it's the requester's only way to track things.
+          notifyRequester: false,
+        });
+      } catch (e) {
+        if (e instanceof AttachmentError) throw new AuthError(400, e.message);
+        throw e;
+      }
+
+      // Staff-visible signal (shown in the ticket's activity trail, same
+      // as "Auto-assigned to X") that this came from a verified, signed-in
+      // teammate rather than the anonymous public form -- otherwise
+      // nothing on the ticket itself distinguishes the two once created.
+      await recordActivity(getTicketsClient(), ticketId, `Filed via Organization Portal by ${session.name} (${session.domain})`);
+
+      return { status: 201, jsonBody: { ticketId } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
 app.http('orgTicketGet', {
   methods: ['GET'],
   authLevel: 'anonymous',

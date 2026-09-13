@@ -93,8 +93,8 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:28px}
 .field{margin-bottom:18px}
 .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text2)}
-.field input,.field textarea{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
-.field input:focus,.field textarea:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
+.field input,.field textarea,.field select{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.field input:focus,.field textarea:focus,.field select:focus{outline:2px solid var(--green);outline-offset:-1px;background:var(--surface)}
 .field textarea{resize:vertical;min-height:90px}
 .field-hint{font-size:12px;color:var(--text3);margin-top:6px}
 
@@ -264,13 +264,42 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <h1 style="margin-bottom:2px">Organization tickets</h1>
       <p style="color:var(--text2);font-size:13px" id="list-context"></p>
     </div>
-    <button class="not-you" id="signout-btn">Sign out</button>
+    <div style="display:flex;gap:12px;align-items:center">
+      <button class="reply-send-btn" id="new-ticket-btn" type="button">＋ New ticket</button>
+      <button class="not-you" id="signout-btn">Sign out</button>
+    </div>
   </div>
   <div class="table-card">
     <table>
       <thead><tr><th>Subject</th><th>Filed by</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody id="tickets-tbody"><tr class="empty-row"><td colspan="5">Loading…</td></tr></tbody>
     </table>
+  </div>
+</div>
+
+<div class="wrap wrap-wide" id="new-ticket-view" style="display:none">
+  <button class="back-link" id="new-ticket-back-btn">← Back to team tickets</button>
+  <div class="detail-card">
+    <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:16px">New ticket</h1>
+    <div class="err-msg" id="new-ticket-err" style="display:none"></div>
+    <form id="new-ticket-form">
+      <div class="field">
+        <label for="new-ticket-subject">Subject</label>
+        <input type="text" id="new-ticket-subject" maxlength="200"/>
+      </div>
+      <div class="field">
+        <label for="new-ticket-category">Category</label>
+        <select id="new-ticket-category"></select>
+      </div>
+      <div class="field">
+        <label for="new-ticket-description">Description</label>
+        <textarea id="new-ticket-description" maxlength="5000"></textarea>
+      </div>
+      <input type="file" id="new-ticket-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+      <div class="file-hint">Up to 4 images, 10 MB each.</div>
+      <div class="file-list" id="new-ticket-file-list"></div>
+      <button class="reply-send-btn" id="new-ticket-submit-btn" type="submit">Submit ticket</button>
+    </form>
   </div>
 </div>
 
@@ -391,7 +420,7 @@ async function orgFetchBlob(path){
 }
 
 function showView(id){
-  ['auth-view', 'reset-view', 'list-view', 'detail-view'].forEach(function(v){
+  ['auth-view', 'reset-view', 'list-view', 'new-ticket-view', 'detail-view'].forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
   });
 }
@@ -619,38 +648,47 @@ function loadAttachmentThumbs(container){
 
 document.getElementById('back-btn').addEventListener('click', loadTicketList);
 
-// ── Reply attachments ──
-const MAX_REPLY_FILES = 4;
-const MAX_REPLY_FILE_BYTES = 10 * 1024 * 1024;
-let replySelectedFiles = [];
+// ── Attachment pickers (reply form + new-ticket form share this) ──
+const MAX_ATTACH_FILES = 4;
+const MAX_ATTACH_FILE_BYTES = 10 * 1024 * 1024;
 
-function renderReplyFileList(){
-  document.getElementById('reply-file-list').innerHTML = replySelectedFiles.map(function(f, i){
-    return '<div class="file-chip">' +
-      '<img src="' + URL.createObjectURL(f) + '" alt=""/>' +
-      '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '">×</button>' +
-      '<div class="name">' + escapeHtml(f.name) + '</div>' +
-    '</div>';
-  }).join('');
+function createFilePicker(inputId, listId){
+  let files = [];
+  const inputEl = document.getElementById(inputId);
+  const listEl = document.getElementById(listId);
+  function render(){
+    listEl.innerHTML = files.map(function(f, i){
+      return '<div class="file-chip">' +
+        '<img src="' + URL.createObjectURL(f) + '" alt=""/>' +
+        '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '">×</button>' +
+        '<div class="name">' + escapeHtml(f.name) + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  inputEl.addEventListener('change', function(e){
+    const picked = Array.prototype.slice.call(e.target.files);
+    for (const f of picked) {
+      if (files.length >= MAX_ATTACH_FILES) break;
+      if (f.size > MAX_ATTACH_FILE_BYTES) { alert(f.name + ' is larger than 10 MB and was skipped.'); continue; }
+      files.push(f);
+    }
+    e.target.value = '';
+    render();
+  });
+  listEl.addEventListener('click', function(e){
+    const btn = e.target.closest('.remove');
+    if (!btn) return;
+    files.splice(Number(btn.dataset.i), 1);
+    render();
+  });
+  return {
+    getFiles: function(){ return files; },
+    reset: function(){ files = []; render(); },
+  };
 }
 
-document.getElementById('reply-attachments').addEventListener('change', function(e){
-  const picked = Array.prototype.slice.call(e.target.files);
-  for (const f of picked) {
-    if (replySelectedFiles.length >= MAX_REPLY_FILES) break;
-    if (f.size > MAX_REPLY_FILE_BYTES) { alert(f.name + ' is larger than 10 MB and was skipped.'); continue; }
-    replySelectedFiles.push(f);
-  }
-  e.target.value = '';
-  renderReplyFileList();
-});
-
-document.getElementById('reply-file-list').addEventListener('click', function(e){
-  const btn = e.target.closest('.remove');
-  if (!btn) return;
-  replySelectedFiles.splice(Number(btn.dataset.i), 1);
-  renderReplyFileList();
-});
+const replyFilePicker = createFilePicker('reply-attachments', 'reply-file-list');
+const newTicketFilePicker = createFilePicker('new-ticket-attachments', 'new-ticket-file-list');
 
 function fileToBase64(file){
   return new Promise(function(resolve, reject){
@@ -661,6 +699,15 @@ function fileToBase64(file){
   });
 }
 
+// Shared by the reply form and the new-ticket form -- both just need "the
+// picker's current files, base64-encoded with their names" in the exact
+// shape the org/* attachment endpoints expect.
+function collectAttachments(picker){
+  return Promise.all(picker.getFiles().map(async function(f){
+    return { fileName: f.name, dataBase64: await fileToBase64(f) };
+  }));
+}
+
 document.getElementById('reply-send-btn').addEventListener('click', async function(){
   const ta = document.getElementById('reply-body');
   const text = ta.value.trim();
@@ -668,19 +715,64 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
   const btn = this;
   btn.disabled = true;
   try {
-    const attachments = await Promise.all(replySelectedFiles.map(async function(f){
-      return { fileName: f.name, dataBase64: await fileToBase64(f) };
-    }));
+    const attachments = await collectAttachments(replyFilePicker);
     await orgFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
       method: 'POST',
       body: { body: text, attachments: attachments },
     });
     ta.value = '';
-    replySelectedFiles = [];
-    renderReplyFileList();
+    replyFilePicker.reset();
     await openTicket(currentTicketId);
   } catch (e) {
     alert('Failed to send reply: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── New ticket ──
+// Same category list tickets.js/tables.js's TICKET_CATEGORIES defines
+// server-side -- kept here as one JS array (rather than hand-typed
+// <option> markup) so there's exactly one place to edit client-side,
+// matching staff.html's own convention for this same list.
+const NEW_TICKET_CATEGORIES = ['Hardware', 'Software', 'Network', 'Account Access', 'Billing', 'Other'];
+document.getElementById('new-ticket-category').innerHTML = NEW_TICKET_CATEGORIES.map(function(c){
+  return '<option' + (c === 'Other' ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+}).join('');
+
+document.getElementById('new-ticket-btn').addEventListener('click', function(){
+  document.getElementById('new-ticket-form').reset();
+  document.getElementById('new-ticket-err').style.display = 'none';
+  newTicketFilePicker.reset();
+  showView('new-ticket-view');
+});
+
+document.getElementById('new-ticket-back-btn').addEventListener('click', loadTicketList);
+
+document.getElementById('new-ticket-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const subject = document.getElementById('new-ticket-subject').value.trim();
+  const description = document.getElementById('new-ticket-description').value.trim();
+  const category = document.getElementById('new-ticket-category').value;
+  const errEl = document.getElementById('new-ticket-err');
+  errEl.style.display = 'none';
+  if (!subject || !description) {
+    errEl.textContent = 'Subject and description are required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('new-ticket-submit-btn');
+  btn.disabled = true;
+  try {
+    const attachments = await collectAttachments(newTicketFilePicker);
+    const data = await orgFetch('/tickets', {
+      method: 'POST',
+      body: { subject: subject, description: description, category: category, attachments: attachments },
+    });
+    await openTicket(data.ticketId);
+  } catch (e) {
+    errEl.textContent = e.message || 'Failed to submit ticket.';
+    errEl.style.display = 'block';
   } finally {
     btn.disabled = false;
   }

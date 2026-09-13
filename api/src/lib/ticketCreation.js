@@ -66,16 +66,16 @@ function autoTriagePriority(subject, description) {
 }
 
 // Creates a real ticket (meta + first message row), auto-assigns it,
-// notifies the assignee (best-effort, rate-limited), and emails the
-// requester a confirmation + tracking link (best-effort) -- the exact same
-// side effects a public form submission has. Fields are re-capped to the
+// notifies the assignee (best-effort, rate-limited), and -- unless
+// `notifyRequester` is explicitly false -- emails the requester a
+// confirmation + tracking link (best-effort). Fields are re-capped to the
 // same MAX_LEN limits ticketsCreate itself enforces, so a caller that
 // doesn't (e.g. one building a name from stored account data) can't write
 // an oversized value even if it forgets to trim first. Throws
 // AttachmentError if `attachments` fails validation; any other throw means
 // nothing was written (attachments already uploaded for this ticket are
 // cleaned up first).
-async function createTicket({ name, email, company, subject, description, category, priority, attachments, context, auditExtra }) {
+async function createTicket({ name, email, company, subject, description, category, priority, attachments, context, auditExtra, notifyRequester = true }) {
   name = String(name || '').trim().slice(0, MAX_LEN.name);
   email = String(email || '').trim().slice(0, MAX_LEN.email);
   company = String(company || '').trim().slice(0, MAX_LEN.company);
@@ -167,17 +167,27 @@ async function createTicket({ name, email, company, subject, description, catego
     }
   }
 
-  try {
-    const clientToken = await getOrCreateClientToken(email);
-    const link = buildTrackingLink(email, clientToken, ticketId);
-    const html = `<p>Hi ${escapeHtml(name)},</p>
+  // Skippable for a caller whose requester is already signed into a
+  // stronger, ongoing view of this exact ticket (the Organization Portal)
+  // -- for them, this email would be redundant at best and confusing at
+  // worst (it hands out a separate, single-person tracking-link credential
+  // to someone who already has full team access). The public form and the
+  // password-reset-request flow both leave this at its default of true,
+  // since neither of their requesters has any other way to track the
+  // ticket.
+  if (notifyRequester) {
+    try {
+      const clientToken = await getOrCreateClientToken(email);
+      const link = buildTrackingLink(email, clientToken, ticketId);
+      const html = `<p>Hi ${escapeHtml(name)},</p>
 <p>We've received your ticket and a technician will follow up soon.</p>
 <p><strong>Subject:</strong> ${escapeHtml(subject)}<br/><strong>Ticket:</strong> ${escapeHtml(ticketId)}</p>
 <p><a href="${escapeHtml(link)}">Track this ticket and view your ticket history</a></p>
 <p>— Jet City IT Help Desk</p>`;
-    await sendMail({ from: SUPPORT_MAILBOX, to: email, subject: `We've received your ticket [${ticketId}]`, html });
-  } catch (e) {
-    context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+      await sendMail({ from: SUPPORT_MAILBOX, to: email, subject: `We've received your ticket [${ticketId}]`, html });
+    } catch (e) {
+      context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
+    }
   }
 
   return ticketId;

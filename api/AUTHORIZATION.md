@@ -169,13 +169,36 @@ inbox ownership" pattern as signup verification) to
 Consuming the link also clears any existing session, forcing
 re-authentication with the new password everywhere; it's also rejected
 outright (403) for a disabled account, same as login, so "Disable" reads
-as a full freeze rather than just blocking sign-in. There's still no
-*self-service* "forgot password" entry point on the sign-in form itself —
-a locked-out user has to ask staff to trigger this for them — but the
-underlying mechanism (token, email, set-new-password page) is the same
-either way, so adding one later is mostly a matter of a new anonymous
-"request a reset" endpoint reusing `sendPasswordResetEmail`, not new
-plumbing.
+as a full freeze rather than just blocking sign-in.
+
+**A locked-out user can also self-serve the first step**, via a "Forgot
+your password?" link on the sign-in form
+(`POST /api/org/request-password-reset`, `email` only). Rather than
+emailing a reset link directly, it files a real ticket on the requester's
+behalf — reusing `api/src/lib/ticketCreation.js`'s `createTicket` (the
+same shared ticket-creation path `ticketsCreate` and this endpoint both
+call, factored out so both get identical auto-assignment, staff
+notification, and requester confirmation-email behavior) — which both
+puts a visible, trackable record in the normal queue and notifies a
+technician via the same auto-assignment email a public ticket triggers.
+It's always filed at High priority (an account lockout is inherently
+time-sensitive in a way `createTicket`'s own keyword-based auto-triage
+can't infer from generated text), and the client-visible message is
+written in the requester's own voice ("I'm unable to sign in...");
+the "use the Reset password button" fulfillment instruction goes on a
+separate internal activity-log entry instead (`recordActivity`,
+staff-only, never returned by `orgTicketGet`/`orgTicketsList`), so the one
+message a requester eventually sees isn't staff narration about them.
+The technician then fulfills it with the existing "Reset password" button
+above; this endpoint never issues a reset token or email itself. Same
+generic `{ok:true}` response and a tight per-email rate limit (3/hour,
+`org-reqreset-email:`) regardless of whether the email matches a real
+account, for the same enumeration- and spam-avoidance reasons as
+`orgResendVerification` — a ticket is only actually created when
+`getAccount` finds a real account for that email, the account isn't
+disabled, and its domain is still enabled (the same two checks
+`requireOrgSession`/`orgLogin` apply, extended to cover this self-service
+entry point too).
 
 **Ticket visibility is scoped by domain, not by individual account.**
 `GET /api/org/tickets`, `GET /api/org/tickets/{id}`, and
@@ -199,9 +222,7 @@ matching the enumeration-avoidance `orgLogin` and
 `orgResendVerification` already use, so this endpoint can't be used to
 learn which coworkers at an enabled domain have already signed up.
 
-**Known gaps, accepted for now**: no *self-service* "forgot password" (a
-locked-out user needs to ask a staff member to trigger the reset for them
-— see above); no permanent brute-force lockout beyond the existing
+**Known gaps, accepted for now**: no permanent brute-force lockout beyond the existing
 per-IP/per-email rate limiting (an in-memory fixed-window counter, same as
 every other rate limit in this app — a determined attacker could still
 grind through guesses across many windows over time, just slowly); and no
@@ -760,4 +781,18 @@ no concept of updating an existing one by id, even if the file includes an
   (still-unused) reset link → also rejected, not silently honored.
   Hammering the same account's admin actions (reset/disable/remove) more
   than 10 times in an hour → 429, independent of how many other accounts
-  or domains staff are managing at the same time.
+  or domains staff are managing at the same time. Click "Forgot your
+  password?" on the sign-in form for a real account's email → generic
+  "we've let Jet City IT know" message either way; a new ticket shows up
+  in the staff queue (category "Account Access", priority "High") auto-assigned
+  to a technician, who gets the same "you've been auto-assigned" email a
+  public ticket would trigger, plus an internal activity-log note pointing
+  them at the "Reset password" button; the requester gets the same
+  confirmation + tracking-link email as any other new ticket, and their
+  own message on it reads in first person, not as staff narration about
+  them. Try it for an email with no
+  account, a disabled account's email, or an account on a domain staff
+  have since disabled → same generic response every time, but no ticket
+  is created (check the staff queue). Click it more than 3 times in
+  an hour for the same email → later clicks still show the generic
+  message, but stop actually filing new tickets.

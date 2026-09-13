@@ -22,8 +22,9 @@ const {
   getAccount,
 } = require('../lib/orgUsers');
 const { sendVerificationEmail } = require('../lib/orgEmails');
-const { getClient: getTicketsClient, ensureTable: ensureTicketsTable, genMessageRowKey } = require('../lib/tables');
+const { getClient: getTicketsClient, ensureTable: ensureTicketsTable, genMessageRowKey, recordActivity } = require('../lib/tables');
 const { findTicketsByDomain } = require('../lib/clientAccess');
+const { createTicket } = require('../lib/ticketCreation');
 const {
   storeAttachments,
   deleteAttachments,
@@ -263,6 +264,81 @@ app.http('orgVerify', {
       return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);
+    }
+  },
+});
+
+// Self-service entry point for someone who can't sign in: rather than
+// emailing a reset link directly (which would need its own token-issuing
+// endpoint to secure), this files a real, visible ticket -- reusing the
+// exact same ticket-creation flow the public form uses (createTicket),
+// including its own auto-assignment + staff notification email -- and
+// leaves the actual reset to a technician, who fulfills it with the
+// existing orgAdminAccountResetPassword button (which emails a proper
+// single-use reset link). Same generic {ok:true} response regardless of
+// whether the email matches a real account, same enumeration-avoidance
+// spirit as signup/resend-verification above.
+app.http('orgRequestPasswordReset', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'org/request-password-reset',
+  handler: async (request, context) => {
+    try {
+      const ip = clientIp(request);
+      const ipLimit = checkRateLimit('org-reqreset-ip:' + ip, 10, 60 * 60 * 1000);
+      if (!ipLimit.allowed) {
+        return { status: 429, headers: { 'Retry-After': String(ipLimit.retryAfterSec) }, jsonBody: { ok: true } };
+      }
+
+      const body = await request.json().catch(() => ({}));
+      const email = normalizeEmail(body.email);
+      if (!email) return { jsonBody: { ok: true } };
+
+      // Tight per-email cap -- this both files a ticket and emails the
+      // requester, so without a limit here it's a way to spam a coworker's
+      // inbox and flood the ticket queue just by knowing their address, not
+      // just a login/enumeration concern.
+      const emailLimit = checkRateLimit('org-reqreset-email:' + email, 3, 60 * 60 * 1000);
+      if (!emailLimit.allowed) return { jsonBody: { ok: true } };
+
+      const domain = emailDomain(email);
+      if (!domain || !isValidDomain(domain)) return { jsonBody: { ok: true } };
+
+      // Independent lookups, run concurrently -- same pattern as
+      // requireOrgSession, which these two checks below are mirroring.
+      const [account, domainEnabled] = await Promise.all([getAccount(email), isDomainEnabled(domain)]);
+      // A disabled account or a domain staff have revoked must not be able
+      // to generate a real ticket + notification emails through this
+      // self-service entry point, any more than they could sign in, reset
+      // their password via a staff-issued link, or keep an existing session
+      // alive -- requireOrgSession/orgLogin/orgResetPassword all enforce
+      // the same two checks; this is the one org/* endpoint that touches an
+      // account without them.
+      if (!account || account.disabled || !domainEnabled) return { jsonBody: { ok: true } };
+
+      const requesterName = account.name || email;
+      // Written in the requester's own voice -- this becomes the ticket's
+      // first client-authored message, and (once they regain access) is
+      // visible to them via their own tracking-link email or org portal
+      // ticket list, same as any other ticket. Staff-facing fulfillment
+      // instructions go on a separate internal activity-log entry below
+      // instead of into this message, since that's read by staff only.
+      const ticketId = await createTicket({
+        name: requesterName,
+        email,
+        company: domain,
+        subject: `Password reset request -- ${email}`,
+        description: "I'm unable to sign in to the organization portal and would like my password reset.",
+        category: 'Account Access',
+        priority: 'High',
+        context,
+        auditExtra: { domain, ip, source: 'org.requestPasswordReset' },
+      });
+      await recordActivity(getTicketsClient(), ticketId, 'Self-service password reset request -- use "Reset password" in Organization Portal admin to fulfill.');
+      return { jsonBody: { ok: true } };
+    } catch (e) {
+      context.error(e);
+      return { status: 500, jsonBody: { error: 'Internal server error' } };
     }
   },
 });

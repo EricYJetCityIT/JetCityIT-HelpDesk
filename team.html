@@ -215,6 +215,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
       </div>
       <button type="submit" class="submit-btn" id="signin-btn">Sign in</button>
       <p class="field-hint"><button type="button" id="resend-link" style="background:none;border:none;color:var(--text3);text-decoration:underline;padding:0;font-size:12px">Didn't get a verification email?</button></p>
+      <p class="field-hint"><button type="button" id="request-reset-link" style="background:none;border:none;color:var(--text3);text-decoration:underline;padding:0;font-size:12px">Forgot your password?</button></p>
     </form>
 
     <form id="signup-form" style="display:none">
@@ -489,6 +490,23 @@ document.getElementById('resend-link').addEventListener('click', async function(
   const infoEl = document.getElementById('auth-info');
   infoEl.textContent = "If that email has an unverified account, we've sent a new verification link.";
   infoEl.style.display = 'block';
+});
+
+document.getElementById('request-reset-link').addEventListener('click', async function(){
+  const email = document.getElementById('si-email').value.trim();
+  if (!email) { alert('Enter your email above first.'); return; }
+  const btn = this;
+  btn.disabled = true;
+  try {
+    // There's no self-service reset-email flow -- this instead files a
+    // ticket so a Jet City IT technician can reset the password by hand
+    // and email a proper reset link, same as any other request.
+    await orgFetch('/request-password-reset', { method: 'POST', body: { email: email } });
+  } catch (e) { /* generic response either way, nothing to show differently */ }
+  const infoEl = document.getElementById('auth-info');
+  infoEl.textContent = "If that email has an organization portal account, we've let Jet City IT know -- they'll reach out to reset your password.";
+  infoEl.style.display = 'block';
+  btn.disabled = false;
 });
 
 document.getElementById('signout-btn').addEventListener('click', async function(){

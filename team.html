@@ -174,6 +174,10 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .file-chip img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;background:var(--bg)}
 .file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+.file-chip.doc{width:auto;max-width:240px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+.file-chip.doc .doc-icon{width:28px;height:28px;border-radius:6px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;letter-spacing:.3px;flex-shrink:0}
+.file-chip.doc .name{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:0}
+.file-chip.doc .remove{position:static;margin-left:auto;flex-shrink:0}
 
 .theme-switcher{position:relative}
 .theme-btn{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer;padding:0}
@@ -333,9 +337,19 @@ tbody td{padding:13px 16px;vertical-align:middle}
         <label for="new-ticket-description">Description</label>
         <textarea id="new-ticket-description" maxlength="5000"></textarea>
       </div>
-      <input type="file" id="new-ticket-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-      <div class="file-hint">Up to 4 images, 10 MB each.</div>
-      <div class="file-list" id="new-ticket-file-list"></div>
+      <div class="field">
+        <label for="new-ticket-attachments">Attach screenshots (optional)</label>
+        <input type="file" id="new-ticket-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+        <div class="file-hint">Up to 4 images, 10 MB each.</div>
+        <div class="file-list" id="new-ticket-file-list"></div>
+      </div>
+      <div class="field">
+        <label for="new-ticket-eml">Attach an email (optional)</label>
+        <input type="file" id="new-ticket-eml" accept=".eml,message/rfc822"/>
+        <div class="file-hint">An Outlook .eml file, up to 20 MB.</div>
+        <div class="file-list" id="new-ticket-eml-file-list"></div>
+        <div class="file-hint" id="new-ticket-eml-prefill-hint" style="display:none">Subject, description, and category were filled in from the email — feel free to edit them.</div>
+      </div>
       <button class="reply-send-btn" id="new-ticket-submit-btn" type="submit">Submit ticket</button>
     </form>
   </div>
@@ -825,25 +839,39 @@ document.getElementById('back-btn').addEventListener('click', loadTicketList);
 const MAX_ATTACH_FILES = 4;
 const MAX_ATTACH_FILE_BYTES = 10 * 1024 * 1024;
 
+// Each item is either {kind:'file', file: File} (from the picker) or
+// {kind:'extracted', fileName, dataBase64, mimeType, fromEml:true} (an
+// image pulled out of an attached .eml -- see the new-ticket form's email
+// parsing below). Both render the same thumbnail/remove chip and count
+// against the same MAX_ATTACH_FILES cap; replyFilePicker just never
+// receives an 'extracted' item, since only the new-ticket form has an
+// .eml field.
+function itemThumbSrc(item){
+  return item.kind === 'file' ? URL.createObjectURL(item.file) : 'data:' + item.mimeType + ';base64,' + item.dataBase64;
+}
+function itemName(item){
+  return item.kind === 'file' ? item.file.name : item.fileName;
+}
+
 function createFilePicker(inputId, listId){
-  let files = [];
+  let items = [];
   const inputEl = document.getElementById(inputId);
   const listEl = document.getElementById(listId);
   function render(){
-    listEl.innerHTML = files.map(function(f, i){
+    listEl.innerHTML = items.map(function(item, i){
       return '<div class="file-chip">' +
-        '<img src="' + URL.createObjectURL(f) + '" alt=""/>' +
-        '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '">×</button>' +
-        '<div class="name">' + escapeHtml(f.name) + '</div>' +
+        '<img src="' + itemThumbSrc(item) + '" alt=""/>' +
+        '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(itemName(item)) + '">×</button>' +
+        '<div class="name">' + escapeHtml(itemName(item)) + '</div>' +
       '</div>';
     }).join('');
   }
   inputEl.addEventListener('change', function(e){
     const picked = Array.prototype.slice.call(e.target.files);
     for (const f of picked) {
-      if (files.length >= MAX_ATTACH_FILES) break;
+      if (items.length >= MAX_ATTACH_FILES) break;
       if (f.size > MAX_ATTACH_FILE_BYTES) { alert(f.name + ' is larger than 10 MB and was skipped.'); continue; }
-      files.push(f);
+      items.push({ kind: 'file', file: f });
     }
     e.target.value = '';
     render();
@@ -851,12 +879,31 @@ function createFilePicker(inputId, listId){
   listEl.addEventListener('click', function(e){
     const btn = e.target.closest('.remove');
     if (!btn) return;
-    files.splice(Number(btn.dataset.i), 1);
+    items.splice(Number(btn.dataset.i), 1);
     render();
   });
   return {
-    getFiles: function(){ return files; },
-    reset: function(){ files = []; render(); },
+    getFiles: function(){ return items; },
+    reset: function(){ items = []; render(); },
+    // Pictures embedded in an attached .eml join the same list as anything
+    // manually picked, tagged fromEml so removing the .eml can drop just
+    // these (see removeFromEml) without disturbing the visitor's own picks.
+    // Returns how many were actually added (capped by MAX_ATTACH_FILES,
+    // possibly fewer than list.length) so a caller can tell "nothing to
+    // add" apart from "wanted to add some but the picker was already full".
+    addExtracted: function(list){
+      let added = 0;
+      for (let i = 0; i < list.length && items.length < MAX_ATTACH_FILES; i++) {
+        items.push({ kind: 'extracted', fileName: list[i].fileName, dataBase64: list[i].dataBase64, mimeType: list[i].mimeType, fromEml: true });
+        added++;
+      }
+      render();
+      return added;
+    },
+    removeFromEml: function(){
+      items = items.filter(function(item){ return !item.fromEml; });
+      render();
+    },
   };
 }
 
@@ -873,11 +920,12 @@ function fileToBase64(file){
 }
 
 // Shared by the reply form and the new-ticket form -- both just need "the
-// picker's current files, base64-encoded with their names" in the exact
+// picker's current items, base64-encoded with their names" in the exact
 // shape the org/* attachment endpoints expect.
 function collectAttachments(picker){
-  return Promise.all(picker.getFiles().map(async function(f){
-    return { fileName: f.name, dataBase64: await fileToBase64(f) };
+  return Promise.all(picker.getFiles().map(async function(item){
+    if (item.kind === 'extracted') return { fileName: item.fileName, dataBase64: item.dataBase64 };
+    return { fileName: item.file.name, dataBase64: await fileToBase64(item.file) };
   }));
 }
 
@@ -917,6 +965,7 @@ document.getElementById('new-ticket-btn').addEventListener('click', function(){
   document.getElementById('new-ticket-form').reset();
   document.getElementById('new-ticket-err').style.display = 'none';
   newTicketFilePicker.reset();
+  clearNewTicketEmlState();
   showView('new-ticket-view');
 });
 
@@ -938,6 +987,9 @@ document.getElementById('new-ticket-form').addEventListener('submit', async func
   btn.disabled = true;
   try {
     const attachments = await collectAttachments(newTicketFilePicker);
+    if (newTicketEmlFile) {
+      attachments.push({ fileName: newTicketEmlFile.name, dataBase64: await fileToBase64(newTicketEmlFile) });
+    }
     const data = await orgFetch('/tickets', {
       method: 'POST',
       body: { subject: subject, description: description, category: category, attachments: attachments },
@@ -949,6 +1001,308 @@ document.getElementById('new-ticket-form').addEventListener('submit', async func
   } finally {
     btn.disabled = false;
   }
+});
+
+// ── Attach an email (.eml) to pre-fill the new-ticket form ──
+// Same best-effort client-side parsing as the public submission form
+// (index.html) -- reads the raw email source just to pre-fill fields, not
+// a source of truth: it only fills fields the signed-in person hasn't
+// already touched, and everything it fills stays fully editable. Not a
+// full RFC 822/MIME parser -- handles the shapes Outlook actually produces
+// (single-part or multipart/alternative|mixed|related, quoted-printable/
+// base64 transfer encodings, RFC 2047 encoded-word subjects) and falls
+// back to leaving the form alone on anything it doesn't recognize.
+const MAX_EML_BYTES = 20 * 1024 * 1024;
+let newTicketEmlFile = null;
+
+// Clears just the .eml half of the new-ticket form's state -- callers pair
+// this with either newTicketFilePicker.reset() (a full form reset) or
+// .removeFromEml() (only dropping images that .eml contributed), so those
+// two differing picker calls stay at each call site rather than folded in
+// here.
+function clearNewTicketEmlState(){
+  newTicketEmlFile = null;
+  renderNewTicketEmlFileList();
+  document.getElementById('new-ticket-eml-prefill-hint').style.display = 'none';
+}
+
+function renderNewTicketEmlFileList(){
+  const wrap = document.getElementById('new-ticket-eml-file-list');
+  if (!newTicketEmlFile) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = '<div class="file-chip doc">' +
+    '<div class="doc-icon">EML</div>' +
+    '<div class="name">' + escapeHtml(newTicketEmlFile.name) + '</div>' +
+    '<button type="button" class="remove" aria-label="Remove ' + escapeHtml(newTicketEmlFile.name) + '">×</button>' +
+  '</div>';
+}
+
+function decodeBase64ToBytes(b64){
+  const bin = atob(String(b64).replace(/[^A-Za-z0-9+/=]/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function decodeBytesAsText(bytes, charset){
+  try { return new TextDecoder(charset || 'utf-8').decode(bytes); }
+  catch (e) { return new TextDecoder('utf-8').decode(bytes); }
+}
+// The raw file is read as Latin-1 (byte-preserving: charCodeAt === the
+// original byte, unlike UTF-8 which can lossily mangle bytes it can't
+// interpret) so this can convert any substring back to its real bytes and
+// decode it with its own declared charset, rather than guessing once for
+// the whole file.
+function latin1StringToBytes(s){
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xFF;
+  return bytes;
+}
+function decodeQuotedPrintable(s, charset){
+  const joined = String(s).replace(/=\r?\n/g, ''); // soft line breaks
+  const bytes = [];
+  for (let i = 0; i < joined.length; i++) {
+    if (joined[i] === '=' && /^[0-9A-Fa-f]{2}$/.test(joined.substr(i + 1, 2))) {
+      bytes.push(parseInt(joined.substr(i + 1, 2), 16));
+      i += 2;
+    } else {
+      bytes.push(joined.charCodeAt(i) & 0xFF);
+    }
+  }
+  return decodeBytesAsText(new Uint8Array(bytes), charset);
+}
+// RFC 2047 "encoded words" (=?charset?B?...?= / =?charset?Q?...?=), which
+// Outlook uses for any non-ASCII Subject.
+function decodeEncodedWords(s){
+  return String(s || '').replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, function(_, charset, enc, data){
+    try {
+      if (enc.toUpperCase() === 'B') return decodeBytesAsText(decodeBase64ToBytes(data), charset);
+      return decodeQuotedPrintable(data.replace(/_/g, ' '), charset);
+    } catch (e) { return data; }
+  });
+}
+
+// Headers end at the first blank line; a continuation line (starts with
+// space/tab) folds onto the previous header per RFC 822.
+function parseEmlHeaders(text){
+  const idx = text.search(/\r?\n\r?\n/);
+  const headerBlock = idx === -1 ? text : text.slice(0, idx);
+  const sep = idx === -1 ? '' : text.slice(idx).match(/^\r?\n\r?\n/)[0];
+  const bodyStart = idx === -1 ? text.length : idx + sep.length;
+  const lines = [];
+  headerBlock.split(/\r?\n/).forEach(function(line){
+    if (/^[ \t]/.test(line) && lines.length) lines[lines.length - 1] += ' ' + line.trim();
+    else lines.push(line);
+  });
+  const headers = {};
+  lines.forEach(function(line){
+    const m = line.match(/^([^:]+):\s*(.*)$/);
+    if (m) headers[m[1].trim().toLowerCase()] = m[2].trim();
+  });
+  return { headers: headers, bodyStart: bodyStart };
+}
+
+function parseContentType(headerValue){
+  if (!headerValue) return { type: 'text/plain', params: {} };
+  const parts = String(headerValue).split(';');
+  const type = parts.shift().trim().toLowerCase();
+  const params = {};
+  parts.forEach(function(p){
+    const m = p.match(/^\s*([a-zA-Z0-9-]+)\s*=\s*"?([^"]*)"?\s*$/);
+    if (m) params[m[1].toLowerCase()] = m[2];
+  });
+  return { type: type, params: params };
+}
+
+function splitMultipart(body, boundary){
+  const segments = body.split('--' + boundary);
+  if (segments.length < 3) return []; // no real closing boundary -- not actually multipart
+  return segments.slice(1, -1).map(function(seg){
+    return seg.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+  });
+}
+
+// Recursively walks a MIME part looking for the best human-readable body:
+// the first text/plain leaf if one exists anywhere, else the first
+// text/html leaf (tags stripped). Returns null on anything unreadable
+// (an attachment part, a type this doesn't handle) rather than throwing.
+function findBestBodyPart(rawPart){
+  const parsed = parseEmlHeaders(rawPart);
+  const ct = parseContentType(parsed.headers['content-type']);
+  const content = rawPart.slice(parsed.bodyStart);
+
+  if (ct.type.indexOf('multipart/') === 0 && ct.params.boundary) {
+    const children = splitMultipart(content, ct.params.boundary);
+    let plain = null, html = null;
+    for (let i = 0; i < children.length; i++) {
+      const found = findBestBodyPart(children[i]);
+      if (!found) continue;
+      if (found.isHtml) { if (!html) html = found; }
+      else { plain = found; break; } // plain always wins once found
+    }
+    return plain || html;
+  }
+  if (ct.type === 'text/plain' || ct.type === 'text/html') {
+    const cte = (parsed.headers['content-transfer-encoding'] || '7bit').toLowerCase();
+    const charset = ct.params.charset || 'utf-8';
+    let text;
+    if (cte === 'base64') text = decodeBytesAsText(decodeBase64ToBytes(content), charset);
+    else if (cte === 'quoted-printable') text = decodeQuotedPrintable(content, charset);
+    else text = decodeBytesAsText(latin1StringToBytes(content), charset); // 7bit/8bit/binary
+    return { text: text, isHtml: ct.type === 'text/html' };
+  }
+  return null;
+}
+
+// Recursively collects every inline image/* leaf part (a screenshot pasted
+// into the body, a photo, a diagram someone forwarded) into `results` as
+// {fileName, dataBase64, mimeType} -- the same shape storeAttachment()
+// already accepts, so these just join the same attachments array as a
+// manually-picked screenshot and get the exact same thumbnail. Stops
+// adding once `results` reaches maxCount; only handles base64-encoded
+// image parts (the overwhelming common case for embedded pictures) and
+// silently skips anything unusual rather than guessing.
+function findEmbeddedImages(rawPart, results, maxCount){
+  if (results.length >= maxCount) return;
+  const parsed = parseEmlHeaders(rawPart);
+  const ct = parseContentType(parsed.headers['content-type']);
+  const content = rawPart.slice(parsed.bodyStart);
+
+  if (ct.type.indexOf('multipart/') === 0 && ct.params.boundary) {
+    const children = splitMultipart(content, ct.params.boundary);
+    for (let i = 0; i < children.length && results.length < maxCount; i++) {
+      findEmbeddedImages(children[i], results, maxCount);
+    }
+    return;
+  }
+  if (ct.type.indexOf('image/') !== 0) return;
+  const cte = (parsed.headers['content-transfer-encoding'] || '').toLowerCase();
+  if (cte !== 'base64') return;
+  const base64 = content.replace(/[\r\n\s]/g, '');
+  if (!base64) return;
+  const disposition = parsed.headers['content-disposition'] || '';
+  const nameMatch = disposition.match(/filename\*?=(?:"([^"]+)"|([^;]+))/i) ||
+    String(parsed.headers['content-type'] || '').match(/name="?([^";]+)"?/i);
+  const fileName = ((nameMatch && (nameMatch[1] || nameMatch[2])) || 'image').trim().slice(0, 150) || 'image';
+  results.push({ fileName: fileName, dataBase64: base64, mimeType: ct.type });
+}
+
+// Not a full HTML parser -- drops style/script blocks, turns block-level
+// tags into newlines, strips whatever tags remain, then decodes entities
+// via a detached (never-inserted, so nothing executes or loads) <div>.
+function htmlToText(html){
+  const stripped = String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  const div = document.createElement('div');
+  div.innerHTML = stripped; // safe: div is never attached to the document
+  return div.textContent || div.innerText || '';
+}
+
+// Matches the "From:/Sent:/(To:)/(Cc:)/Subject:" (or "-----Original
+// Message-----" / "-----Forwarded message-----" / "On ... wrote:") block
+// that Outlook and other mail clients insert verbatim into the VISIBLE body
+// text when replying or forwarding (as opposed to the real RFC 822 envelope
+// headers, parsed separately, which never reach the description at all).
+// Matched globally and simply removed, keeping the actual message content
+// on both sides of it -- the goal is to drop the header-line noise, not to
+// truncate the message. Deliberately requires the whole From/Sent/Subject
+// block, not a lone "From:" line, so a genuine message that happens to
+// mention "From:" in a sentence is left alone.
+const QUOTE_MARKER_RE = /^-{2,}\s*(Original Message|Forwarded [Mm]essage)\s*-{2,}\s*$|^From:.*\r?\nSent:.*\r?\n(To:.*\r?\n)?(Cc:.*\r?\n)?Subject:.*$|^On .{0,120} wrote:\s*$/gim;
+function stripQuoteMarkers(text){
+  return text.replace(QUOTE_MARKER_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function extractFromEml(rawText){
+  const top = parseEmlHeaders(rawText);
+  const subject = decodeEncodedWords(top.headers['subject'] || '').trim().slice(0, 200);
+  const part = findBestBodyPart(rawText);
+  let description = '';
+  if (part) {
+    let text = part.isHtml ? htmlToText(part.text) : part.text;
+    text = text.replace(/\r\n/g, '\n')
+      .replace(/^[ \t]*>[ \t]?/gm, '') // drop leading '>' quote markers
+      .replace(/\[cid:[^\]]*\]/gi, ''); // the plain-text side of an inline image is just this placeholder -- the picture itself is already pulled in as an attachment, so the text version would just be noise
+    description = stripQuoteMarkers(text).replace(/\n{3,}/g, '\n\n').trim().slice(0, 5000);
+  }
+  const images = [];
+  findEmbeddedImages(rawText, images, MAX_ATTACH_FILES);
+  return { subject: subject, description: description, images: images };
+}
+
+// Best-effort pre-triage, mirroring the server's own autoTriagePriority --
+// never authoritative, staff/the client can always change it by hand.
+const CATEGORY_KEYWORDS = {
+  'Account Access': ['password', 'log in', 'login', 'locked out', 'mfa', '2fa', "can't sign in", 'reset my'],
+  'Network': ['wifi', 'wi-fi', 'vpn', 'network', 'internet', 'connection', 'router', "can't connect"],
+  'Hardware': ['laptop', 'monitor', 'printer', 'keyboard', 'mouse', 'docking station', 'hardware', "won't turn on", "won't power on"],
+  'Software': ['software', 'install', 'update', 'license', 'application', 'outlook', 'excel', 'crashing', 'error message'],
+  'Billing': ['invoice', 'billing', 'charge', 'payment', 'subscription cost'],
+};
+function inferCategory(text){
+  const lower = text.toLowerCase();
+  const cats = Object.keys(CATEGORY_KEYWORDS);
+  for (let i = 0; i < cats.length; i++) {
+    if (CATEGORY_KEYWORDS[cats[i]].some(function(kw){ return lower.indexOf(kw) !== -1; })) return cats[i];
+  }
+  return '';
+}
+
+function prefillFromEml(file){
+  const reader = new FileReader();
+  reader.onload = function(){
+    let extracted;
+    try { extracted = extractFromEml(String(reader.result || '')); }
+    catch (e) { return; } // a parsing quirk should never block the person filling this out
+    const subjectEl = document.getElementById('new-ticket-subject');
+    const descEl = document.getElementById('new-ticket-description');
+    const catEl = document.getElementById('new-ticket-category');
+    let filledAny = false;
+    if (extracted.subject && !subjectEl.value.trim()) { subjectEl.value = extracted.subject; filledAny = true; }
+    if (extracted.description && !descEl.value.trim()) { descEl.value = extracted.description; filledAny = true; }
+    if (extracted.description && catEl.value === 'Other') {
+      const cat = inferCategory(extracted.subject + ' ' + extracted.description);
+      if (cat) { catEl.value = cat; filledAny = true; }
+    }
+    if (extracted.images.length && newTicketFilePicker.addExtracted(extracted.images) > 0) {
+      filledAny = true;
+    }
+    if (filledAny) document.getElementById('new-ticket-eml-prefill-hint').style.display = 'block';
+  };
+  reader.readAsText(file, 'iso-8859-1');
+}
+
+document.getElementById('new-ticket-eml').addEventListener('change', function(e){
+  const f = e.target.files[0];
+  e.target.value = ''; // clear so picking again re-fires change even for the same file
+  const errEl = document.getElementById('new-ticket-err');
+  if (!f) return;
+  if (!/\.eml$/i.test(f.name)) {
+    errEl.textContent = 'Please choose a .eml file exported from Outlook.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (f.size > MAX_EML_BYTES) {
+    errEl.textContent = f.name + ' is larger than 20 MB.';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+  newTicketEmlFile = f;
+  renderNewTicketEmlFileList();
+  document.getElementById('new-ticket-eml-prefill-hint').style.display = 'none';
+  // Drop any images pulled from a previously-attached .eml before parsing
+  // the new one, so switching files doesn't leave stale extras behind.
+  newTicketFilePicker.removeFromEml();
+  prefillFromEml(f);
+});
+
+document.getElementById('new-ticket-eml-file-list').addEventListener('click', function(e){
+  if (!e.target.closest('.remove')) return;
+  clearNewTicketEmlState();
+  newTicketFilePicker.removeFromEml();
 });
 
 // ── Assets (read-only) ──

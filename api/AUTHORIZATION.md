@@ -354,6 +354,31 @@ that identifies a client by domain (Assets, the admin view) — a known,
 accepted cosmetic mismatch against the public form's free-text company
 field for the same real-world client.
 
+**The new-ticket form also accepts an attached .eml**, matching the
+public submission form's own "Attach an email" feature exactly (same
+client-side parser, copied rather than shared since this app has no
+build step/JS module system — see the note on this pattern elsewhere in
+this doc). Reads the forwarded email client-side only to pre-fill
+subject/description/category (never overwriting a field the signed-in
+person already typed into), extracts up to 4 embedded images into the
+same attachment list as anything manually picked, and uploads the .eml
+itself as a 5th attachment on submit — `storeAttachments` already accepts
+this generically (up to 4 images + 1 forwarded email per message, 20 MB
+cap on the .eml, sniffed as `message/rfc822` by its actual bytes), so
+this needed zero backend changes.
+
+**Known limitation, inherited from the public form's identical feature,
+not introduced by this port**: the advertised per-file hints ("4 images,
+10 MB each" / "an .eml, up to 20 MB") read as independent budgets, but
+`MAX_TOTAL_BYTES_PER_MESSAGE` (20 MB combined raw bytes) is checked only
+server-side and is smaller than the sum of the per-file caps — a large
+.eml near its own limit leaves little headroom for images, and an
+.eml's own embedded images count twice toward that total (once inside
+the .eml's raw bytes, once as their own extracted attachments). This is
+exactly how index.html's original feature already behaves; fixing it
+would mean changing both forms in lockstep, which is out of scope for a
+"make it match" port.
+
 **Adversarial security review** (high effort, 10 findings confirmed and
 fixed before this shipped): the domain-move-style duplicate-row class of
 bug doesn't apply here (no equivalent operation), but review did catch —
@@ -927,7 +952,12 @@ no concept of updating an existing one by id, even if the file includes an
   console only) shows "Filed via Organization Portal by ..." — unlike the
   public form and "Forgot your password?", the requester does NOT get a
   separate confirmation/tracking-link email, since they're already looking
-  at the ticket in the portal. Staff admin view: leave a note on a
+  at the ticket in the portal. On that same form, attach a real forwarded
+  .eml → subject/description/category fill in (only for fields left
+  blank), embedded screenshots join the attachment list, and the .eml
+  itself is uploaded too — remove the .eml afterward and confirm only the
+  images it contributed disappear, not anything picked by hand. Staff
+  admin view: leave a note on a
   domain, then have a second (unrefreshed) tab try enabling/disabling that
   same domain → the toggle still only changes what that tab actually
   clicked, never silently reverted by an unrelated note save elsewhere.

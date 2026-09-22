@@ -716,6 +716,78 @@ own prompt (`track.html`) and the staff console. Moving between Resolved
 and Closed is not treated as a reopen, since that's the same resolution
 just being formally closed out — the rating survives that transition.
 
+## Smartsheet linking
+
+`staff.html`'s reply box has a "📊 Link Smartsheet" button next to the
+attachment picker, on every ticket. Picking a sheet adds it to the reply;
+once sent, it renders as a clickable chip that opens the real sheet on
+smartsheet.com in a new tab. It's part of the reply message itself, so it's
+just as visible to the client as an attached screenshot — on `/track.html`
+and the Organization Portal (`/team.html`), not staff-only like an internal
+note.
+
+**Auth**: a single shared Smartsheet Personal Access Token
+(`SMARTSHEET_API_TOKEN` app setting) for the whole team, not per-staff OAuth
+— Smartsheet's own docs recommend a PAT over OAuth for exactly this shape of
+integration (one internal tool, one team, not a multi-tenant product), and
+it matches this app's existing "one shared credential" pattern
+(`MAIL_CLIENT_SECRET`/`graph.js`). The token authenticates as whichever
+Smartsheet account it belongs to, so only sheets that account can see are
+ever listed or linkable — same access boundary as that account has in
+Smartsheet itself, nothing broader. Like every other credential in this
+app, the token itself is generated and pasted into Azure App Settings by a
+human, never handled by Claude.
+
+- `GET /api/smartsheet/sheets` (`api/src/functions/smartsheet.js`,
+  staff-gated) backs the reply box's picker — a name + a Smartsheet-issued
+  `permalink` per sheet, cached 5 minutes (`api/src/lib/smartsheet.js`) to
+  avoid a Smartsheet round-trip on every open of the picker. A sheet whose
+  `permalink` isn't a real `https://app.smartsheet.com/...` URL is dropped
+  rather than surfaced — that field is rendered as a live, clickable
+  `<a href>` shown to clients too, so it's validated at the source instead
+  of trusted blindly just because it came back from Smartsheet's own API.
+- **The reply endpoint never trusts client-supplied sheet name/permalink
+  text.** The frontend only ever sends `linkedSheetIds` (bare ids);
+  `ticketReply` calls `resolveLinkedSheets()` (`api/src/lib/smartsheet.js`),
+  which caps at 5 per reply and re-resolves each id against its own
+  server-side sheet list, storing exactly what Smartsheet itself returned.
+  Without this, a malicious or compromised staff-side request could attach
+  an arbitrary "Linked Smartsheet" chip pointing anywhere it likes, rendered
+  as a trusted-looking link in front of the client — the same class of
+  "never trust the client's declared value" reasoning already applied to
+  attachment content-type sniffing above. This resolution runs *before*
+  `storeAttachments()` in `ticketReply`, deliberately: it's a cheap,
+  side-effect-free lookup, so if Smartsheet is unreachable there's nothing
+  to clean up yet — resolving it after attachments were already uploaded
+  would risk orphaning those blobs with no cleanup path if the Smartsheet
+  call then failed.
+- An id that doesn't resolve (sheet deleted, access to it revoked from the
+  shared token's account, or — since each Function instance caches the
+  sheet list independently — briefly stale across instances) is silently
+  dropped rather than failing the whole reply. `ticketReply`'s response
+  echoes back exactly which sheets were actually linked
+  (`{ok: true, linkedSheets: [...]}`), and `staff.html` compares that count
+  against how many the staff member picked, warning them if fewer made it
+  in rather than a sheet just quietly vanishing from the sent reply.
+- Stored as `linkedSheetsJson` on the message row (parallel to
+  `attachmentsJson`, parsed the same defensive way), surfaced as
+  `linkedSheets: [{id, name, permalink}]` in `messageToJson`/
+  `messageToClientJson`/`messageToOrgJson`. `ticketMerge` copies it straight
+  across when migrating a message row — unlike an attachment, a linked
+  sheet has no blob to re-upload, it's just metadata.
+- If `SMARTSHEET_API_TOKEN` isn't set (e.g. before it's configured for the
+  first time), the picker and reply endpoint both surface a plain "Smartsheet
+  is not connected yet" error rather than a raw failure — everything else
+  about replying to a ticket keeps working normally. The picker doesn't cache
+  a failed load, so it retries cleanly on the next open instead of replaying
+  the same stale error for the rest of the session once the token's added.
+- Switching to a different ticket clears any unsent reply/note draft,
+  staged image attachments, AND any staged Smartsheet pick — all four
+  together, in `openTicket()`. Without this, a draft (including a live link
+  to internal Smartsheet content) staged for one ticket could get sent to a
+  completely different client if staff switched tickets mid-draft and then
+  hit Send without noticing.
+
 ## Email notifications
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a

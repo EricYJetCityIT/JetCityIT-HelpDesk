@@ -35,6 +35,7 @@ const {
   dispositionFor,
   AttachmentError,
 } = require('../lib/attachments');
+const { parseLinkedSheets } = require('../lib/smartsheet');
 
 function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -120,6 +121,7 @@ function messageToOrgJson(m) {
     authorName: m.authorType === 'staff' ? 'Jet City IT Help Desk' : m.authorName,
     body: m.body,
     attachments: parseAttachments(m.attachmentsJson),
+    linkedSheets: parseLinkedSheets(m.linkedSheetsJson),
     createdAt: m.createdAt,
   };
 }

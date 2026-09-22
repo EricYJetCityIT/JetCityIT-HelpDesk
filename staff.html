@@ -266,6 +266,32 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .file-chip .name{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file-chip .remove{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;border:none;font-size:12px;line-height:20px;cursor:pointer;padding:0}
 
+/* Linked Smartsheet chip -- used both while staging one on an unsent reply
+   (a plain div with a remove ×) and once it's actually sent (an <a> that
+   opens the real sheet in a new tab, per the "same shape either way" spirit
+   of the other chip styles here). */
+.sheet-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:600}
+.sheet-chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet-chip .remove{background:none;border:none;color:var(--text3);font-size:15px;line-height:1;padding:0;margin-left:2px}
+.sheet-chip .remove:hover{color:var(--red)}
+a.sheet-chip{text-decoration:none}
+a.sheet-chip:hover{background:var(--border)}
+
+/* Reply box's Smartsheet picker -- same open/close dropdown mechanics as
+   .theme-switcher/.range-picker below, just its own instance. */
+.attach-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sheet-picker{position:relative}
+.sheet-picker-btn{padding:7px 12px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:12.5px;font-weight:600;color:var(--text2)}
+.sheet-picker-btn:hover{background:var(--bg)}
+.sheet-picker-menu{position:absolute;top:calc(100% + 8px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:8px;min-width:240px;max-width:320px;z-index:20}
+.sheet-picker-menu[hidden]{display:none}
+.sheet-search{width:100%;font:inherit;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);margin-bottom:6px;box-sizing:border-box}
+.sheet-picker-list{max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.sheet-picker-option{display:block;width:100%;text-align:left;padding:7px 9px;border:none;background:none;border-radius:6px;font-size:13px;color:var(--text2)}
+.sheet-picker-option:hover:not(:disabled){background:var(--bg)}
+.sheet-picker-option:disabled{color:var(--text3);cursor:default}
+.sheet-picker-empty{font-size:12.5px;color:var(--text3);padding:8px 4px}
+
 .theme-switcher{position:relative}
 .theme-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text2);display:flex;align-items:center;justify-content:center;padding:0}
 .theme-btn:hover{background:var(--bg)}
@@ -542,9 +568,19 @@ tbody td{padding:13px 16px;vertical-align:middle}
           <option value="">Insert a canned response…</option>
         </select>
         <textarea id="reply-body" placeholder="Write a reply…"></textarea>
-        <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+        <div class="attach-row">
+          <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
+          <div class="sheet-picker">
+            <button type="button" class="sheet-picker-btn" id="reply-sheet-btn">📊 Link Smartsheet</button>
+            <div class="sheet-picker-menu" id="reply-sheet-menu" hidden>
+              <input type="text" class="sheet-search" id="reply-sheet-search" placeholder="Search sheets…"/>
+              <div class="sheet-picker-list" id="reply-sheet-picker-list"></div>
+            </div>
+          </div>
+        </div>
         <div class="file-hint">Up to 4 images, 10 MB each.</div>
         <div class="file-list" id="reply-file-list"></div>
+        <div class="file-list" id="reply-sheet-list"></div>
         <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
       </div>
       <div class="note-box">
@@ -921,7 +957,8 @@ async function getTokenOrReauth(){
     // browsing the ticket list) without adding a needless confirm().
     const draft = document.getElementById('reply-body').value.trim() ||
       document.getElementById('note-body').value.trim() ||
-      replySelectedFiles.length > 0;
+      replySelectedFiles.length > 0 ||
+      replySelectedSheets.length > 0;
     if (draft && !confirm(
       "Your session needs to be renewed to continue. This will reload the page -- " +
       "copy anything you're writing first if you want to keep it.\n\nContinue now?"
@@ -1801,6 +1838,18 @@ let currentTicketId = null;
 async function openTicket(id){
   currentTicketId = id;
   showDetail();
+  // Any unsent reply/note draft -- typed text, staged image attachments, or
+  // a staged Smartsheet link -- belongs to whatever ticket was open before,
+  // never to the one being switched to. Without this reset, switching
+  // tickets mid-draft and then hitting Send would attach/email a leftover
+  // draft (including a live link to internal Smartsheet content) to a
+  // completely different client than the one it was meant for.
+  document.getElementById('reply-body').value = '';
+  document.getElementById('note-body').value = '';
+  replySelectedFiles = [];
+  replySelectedSheets = [];
+  renderReplyFileList();
+  renderReplySheetList();
   // Cleared/disabled up front, before the fetch even starts -- otherwise a
   // failed load (network blip, cold start) leaves the PREVIOUS ticket's
   // subject/id sitting in the header while currentTicketId already points at
@@ -1858,6 +1907,7 @@ async function openTicket(id){
         '<div class="msg-head"><span>' + escapeHtml(who) + '</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
         '<div class="msg-body">' + escapeHtml(m.body) + '</div>' +
         attachmentsHtml(t.ticketId, m.attachments) +
+        linkedSheetsHtml(m.linkedSheets) +
       '</div>';
     }).join('');
     loadAttachmentThumbs(thread);
@@ -1876,6 +1926,13 @@ function attachmentsHtml(ticketId, attachments){
       return '<a class="attachment-thumb doc" data-path="' + escapeHtml(path) + '" href="#" title="' + escapeHtml(a.fileName) + '"><span class="doc-icon">EML</span><span class="doc-name">' + escapeHtml(a.fileName) + '</span></a>';
     }
     return '<a class="attachment-thumb" data-path="' + escapeHtml(path) + '" href="#" title="' + escapeHtml(a.fileName) + '"><img alt="' + escapeHtml(a.fileName) + '"/></a>';
+  }).join('') + '</div>';
+}
+
+function linkedSheetsHtml(linkedSheets){
+  if (!linkedSheets || !linkedSheets.length) return '';
+  return '<div class="file-list">' + linkedSheets.map(function(s){
+    return '<a class="sheet-chip" href="' + escapeHtml(s.permalink) + '" target="_blank" rel="noopener" title="Open in Smartsheet"><span class="name">📊 ' + escapeHtml(s.name) + '</span></a>';
   }).join('') + '</div>';
 }
 
@@ -2048,6 +2105,103 @@ document.getElementById('reply-file-list').addEventListener('click', function(e)
   renderReplyFileList();
 });
 
+// ── Smartsheet linking ──
+// The sheet list itself carries no per-reply data, so it's fetched once per
+// page load (cached in smartsheetListPromise) and reused for every ticket's
+// picker rather than re-fetched each time it's opened.
+const MAX_REPLY_SHEETS = 5;
+let replySelectedSheets = [];
+let smartsheetListPromise = null;
+
+function loadSmartsheetList(){
+  if (!smartsheetListPromise) {
+    // A rejection is NOT cached -- otherwise the first failed load (e.g.
+    // opened before SMARTSHEET_API_TOKEN was configured, or a transient
+    // Smartsheet outage) would keep replaying that same stale failure for
+    // the rest of the page session even after the real problem clears up.
+    smartsheetListPromise = apiFetch('/smartsheet/sheets').then(function(data){ return data.sheets || []; })
+      .catch(function(err){ smartsheetListPromise = null; throw err; });
+  }
+  return smartsheetListPromise;
+}
+
+function renderReplySheetList(){
+  document.getElementById('reply-sheet-list').innerHTML = replySelectedSheets.map(function(s, i){
+    return '<div class="sheet-chip">' +
+      '<span class="name">📊 ' + escapeHtml(s.name) + '</span>' +
+      '<button type="button" class="remove" data-i="' + i + '" aria-label="Remove ' + escapeHtml(s.name) + '">×</button>' +
+    '</div>';
+  }).join('');
+}
+
+function renderSheetPickerList(sheets, query){
+  const list = document.getElementById('reply-sheet-picker-list');
+  const q = query.trim().toLowerCase();
+  const filtered = q ? sheets.filter(function(s){ return s.name.toLowerCase().indexOf(q) !== -1; }) : sheets;
+  if (!filtered.length) {
+    list.innerHTML = '<div class="sheet-picker-empty">' + (sheets.length ? 'No matching sheets' : 'No sheets found') + '</div>';
+    return;
+  }
+  list.innerHTML = filtered.slice(0, 50).map(function(s){
+    const already = replySelectedSheets.some(function(sel){ return sel.id === s.id; });
+    return '<button type="button" class="sheet-picker-option" data-id="' + escapeHtml(s.id) + '"' + (already ? ' disabled' : '') + '>' +
+      escapeHtml(s.name) + (already ? ' (added)' : '') +
+    '</button>';
+  }).join('');
+}
+
+(function(){
+  const btn = document.getElementById('reply-sheet-btn');
+  const menu = document.getElementById('reply-sheet-menu');
+  const search = document.getElementById('reply-sheet-search');
+  const list = document.getElementById('reply-sheet-picker-list');
+  let sheetsCache = null;
+
+  function closeMenu(){ menu.hidden = true; }
+
+  btn.addEventListener('click', function(e){
+    e.stopPropagation();
+    if (!menu.hidden) { closeMenu(); return; }
+    menu.hidden = false;
+    search.value = '';
+    search.focus();
+    list.innerHTML = '<div class="sheet-picker-empty">Loading…</div>';
+    loadSmartsheetList().then(function(sheets){
+      sheetsCache = sheets;
+      renderSheetPickerList(sheets, '');
+    }).catch(function(e){
+      list.innerHTML = '<div class="sheet-picker-empty">' + escapeHtml(e.message || 'Smartsheet is not connected yet.') + '</div>';
+    });
+  });
+
+  search.addEventListener('input', function(){
+    if (sheetsCache) renderSheetPickerList(sheetsCache, search.value);
+  });
+
+  list.addEventListener('click', function(e){
+    const opt = e.target.closest('.sheet-picker-option');
+    if (!opt || opt.disabled) return;
+    const sheet = (sheetsCache || []).find(function(s){ return s.id === opt.dataset.id; });
+    if (!sheet) return;
+    if (replySelectedSheets.length >= MAX_REPLY_SHEETS) { alert('Up to ' + MAX_REPLY_SHEETS + ' linked sheets per reply.'); return; }
+    replySelectedSheets.push(sheet);
+    renderReplySheetList();
+    renderSheetPickerList(sheetsCache, search.value);
+  });
+
+  document.addEventListener('click', function(e){
+    if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); });
+})();
+
+document.getElementById('reply-sheet-list').addEventListener('click', function(e){
+  const btn = e.target.closest('.remove');
+  if (!btn) return;
+  replySelectedSheets.splice(Number(btn.dataset.i), 1);
+  renderReplySheetList();
+});
+
 function fileToBase64(file){
   return new Promise(function(resolve, reject){
     const reader = new FileReader();
@@ -2067,14 +2221,25 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
     const attachments = await Promise.all(replySelectedFiles.map(async function(f){
       return { fileName: f.name, dataBase64: await fileToBase64(f) };
     }));
-    await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
+    const requestedSheetCount = replySelectedSheets.length;
+    const resp = await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
       method: 'POST',
-      body: JSON.stringify({ body: text, attachments: attachments }),
+      body: JSON.stringify({ body: text, attachments: attachments, linkedSheetIds: replySelectedSheets.map(function(s){ return s.id; }) }),
     });
     ta.value = '';
     replySelectedFiles = [];
+    replySelectedSheets = [];
     renderReplyFileList();
+    renderReplySheetList();
     await openTicket(currentTicketId);
+    // linkedSheets echoes back what actually got resolved/stored -- fewer
+    // than requested means one silently couldn't be found server-side
+    // (deleted, access revoked, or a stale picker list) rather than that
+    // sheet just quietly missing from the sent reply with no explanation.
+    const linkedCount = (resp.linkedSheets || []).length;
+    if (linkedCount < requestedSheetCount) {
+      alert((requestedSheetCount - linkedCount) + ' linked sheet(s) could not be found and were not included in the reply. They may have been deleted or your sheet list may be stale -- try reopening the picker.');
+    }
   } catch (e) {
     alert('Failed to send reply: ' + e.message);
   } finally {

@@ -13,6 +13,7 @@ const {
 } = require('../lib/clientAccess');
 const { audit } = require('../lib/audit');
 const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
+const { parseLinkedSheets } = require('../lib/smartsheet');
 const { clientIp } = require('../lib/ip');
 const { odataEscape } = require('../lib/odata');
 
@@ -40,6 +41,7 @@ function messageToClientJson(m) {
     from: m.authorType === 'staff' ? 'staff' : 'you',
     body: m.body,
     attachments: parseAttachments(m.attachmentsJson),
+    linkedSheets: parseLinkedSheets(m.linkedSheetsJson),
     createdAt: m.createdAt,
   };
 }

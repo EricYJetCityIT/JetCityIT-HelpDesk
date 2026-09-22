@@ -191,6 +191,10 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .attachment-thumb.doc{width:auto;max-width:160px;height:auto;display:flex;align-items:center;gap:6px;padding:6px 8px}
 .attachment-thumb.doc .doc-icon{width:24px;height:24px;border-radius:5px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;flex-shrink:0}
 .attachment-thumb.doc .doc-name{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.linked-sheets{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.sheet-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:600;text-decoration:none}
+.sheet-chip:hover{background:var(--border)}
+.sheet-chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-hint{font-size:12px;color:var(--text3);margin:6px 0}
 .file-list{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:10px}
 .file-chip{position:relative;width:64px}
@@ -496,6 +500,7 @@ async function openTicket(id){
         '<div class="msg-head"><span>' + who + '</span><span class="msg-time">' + relativeTime(m.createdAt) + '</span></div>' +
         '<div class="msg-body">' + escapeHtml(m.body) + '</div>' +
         attachmentsHtml(t.ticketId, m.attachments) +
+        linkedSheetsHtml(m.linkedSheets) +
       '</div>';
     }).join('');
 
@@ -534,6 +539,13 @@ function attachmentsHtml(ticketId, attachments){
       return '<a class="attachment-thumb doc" href="' + escapeHtml(url) + '" target="_blank" title="' + escapeHtml(a.fileName) + '"><span class="doc-icon">EML</span><span class="doc-name">' + escapeHtml(a.fileName) + '</span></a>';
     }
     return '<a class="attachment-thumb" href="' + escapeHtml(url) + '" target="_blank" title="' + escapeHtml(a.fileName) + '"><img src="' + escapeHtml(url) + '" alt="' + escapeHtml(a.fileName) + '"/></a>';
+  }).join('') + '</div>';
+}
+
+function linkedSheetsHtml(linkedSheets){
+  if (!linkedSheets || !linkedSheets.length) return '';
+  return '<div class="linked-sheets">' + linkedSheets.map(function(s){
+    return '<a class="sheet-chip" href="' + escapeHtml(s.permalink) + '" target="_blank" rel="noopener" title="Open in Smartsheet"><span class="name">📊 ' + escapeHtml(s.name) + '</span></a>';
   }).join('') + '</div>';
 }
 

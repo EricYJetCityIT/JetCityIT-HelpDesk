@@ -6,6 +6,7 @@ const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
 const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
+const { resolveLinkedSheets, parseLinkedSheets, SmartsheetError } = require('../lib/smartsheet');
 const { findAssetById } = require('../lib/assetsTable');
 const { odataEscape } = require('../lib/odata');
 const { emailDomain } = require('../lib/domain');
@@ -58,6 +59,7 @@ function messageToJson(e) {
     minutes: e.minutes, // only present on kind: 'time' rows
     note: e.note, // only present on kind: 'time' rows
     attachments: parseAttachments(e.attachmentsJson),
+    linkedSheets: parseLinkedSheets(e.linkedSheetsJson),
     createdAt: e.createdAt,
   };
 }
@@ -316,6 +318,19 @@ app.http('ticketReply', {
         throw e;
       }
 
+      // Resolved BEFORE storeAttachments: this is a cheap, side-effect-free
+      // lookup (no blobs written yet), so if Smartsheet is unreachable there
+      // is nothing to clean up -- unlike a failure discovered only after
+      // attachments are already uploaded, which would otherwise orphan them
+      // with no cleanup path.
+      let linkedSheets;
+      try {
+        linkedSheets = await resolveLinkedSheets(body.linkedSheetIds);
+      } catch (e) {
+        if (e instanceof SmartsheetError) throw new AuthError(502, e.message);
+        throw e;
+      }
+
       let attachments;
       try {
         attachments = await storeAttachments(ticketId, body.attachments);
@@ -335,6 +350,7 @@ app.http('ticketReply', {
           authorUpn: user.upn,
           body: text,
           attachmentsJson: attachments.length ? JSON.stringify(attachments) : '',
+          linkedSheetsJson: linkedSheets.length ? JSON.stringify(linkedSheets) : '',
           createdAt: now,
         });
         // First STAFF reply only -- this is the SLA "first response" clock,
@@ -371,7 +387,12 @@ app.http('ticketReply', {
         }
       }
 
-      return { status: 201, jsonBody: { ok: true } };
+      // linkedSheets echoes back exactly what was resolved/stored -- the
+      // frontend compares its length against how many it asked for, so it
+      // can warn the staff member if one silently didn't resolve (deleted,
+      // access revoked, or a stale picker cache) rather than that sheet just
+      // quietly not being in the reply with no indication why.
+      return { status: 201, jsonBody: { ok: true, linkedSheets } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
@@ -564,6 +585,10 @@ app.http('ticketMerge', {
             }
             newRow.attachmentsJson = newAttachments.length ? JSON.stringify(newAttachments) : '';
           }
+          // Unlike attachments, a linked sheet has no blob to migrate --
+          // it's just {id, name, permalink} metadata, so it copies straight
+          // across.
+          newRow.linkedSheetsJson = row.linkedSheetsJson || '';
         } else if (row.kind === 'time') {
           newRow.authorName = row.authorName;
           newRow.authorUpn = row.authorUpn || '';

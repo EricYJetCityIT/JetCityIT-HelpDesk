@@ -33,6 +33,11 @@ function metaToJson(e) {
     subject: e.subject,
     assignee: e.assignee || '',
     assetId: e.assetId || '',
+    // Ticket-level linked Smartsheets -- staff-only, like assetId above,
+    // never sent to the client (contrast messageToJson's own linkedSheets
+    // below, which IS client-visible: that one rides along on a specific
+    // sent reply, this one is a standing attribute of the ticket itself).
+    linkedSheets: parseLinkedSheets(e.linkedSheetsJson),
     rating: e.rating || null,
     ratedAt: e.ratedAt || null,
     // Only ever set via the Organization Portal's shared rating (any
@@ -300,15 +305,6 @@ app.http('ticketReply', {
 
       const body = await request.json().catch(() => ({}));
       const text = String(body.body || '').trim().slice(0, 5000);
-      // notify defaults to true (every existing caller sends a real message
-      // and expects the client to hear about it) -- explicitly false is how
-      // the reply box's "Save" action attaches something (typically just a
-      // linked sheet) to the ticket without emailing the requester. A real
-      // notified reply still always needs an actual message, same as before
-      // this existed; a silent save just needs SOMETHING (checked below,
-      // once attachments/linkedSheets are known).
-      const notify = body.notify !== false;
-      if (notify && !text) throw new AuthError(400, 'Reply body is required');
 
       await ensureTable();
       const table = getClient();
@@ -339,13 +335,16 @@ app.http('ticketReply', {
         throw e;
       }
 
+      // A reply no longer strictly needs typed text -- the reply box's
+      // "Send" button shares a linked sheet with the client with no message
+      // required, so this just needs SOME content, not specifically text.
       // Checked here (before storeAttachments runs) rather than after, so a
       // rejection never has to unwind an attachment blob that was already
       // uploaded -- same reasoning as resolving linkedSheets before
       // storeAttachments above.
       const hasRequestedAttachments = Array.isArray(body.attachments) && body.attachments.length > 0;
-      if (!notify && !text && !linkedSheets.length && !hasRequestedAttachments) {
-        throw new AuthError(400, 'Add a message, attachment, or linked sheet before saving');
+      if (!text && !linkedSheets.length && !hasRequestedAttachments) {
+        throw new AuthError(400, 'Reply must include a message, attachment, or linked sheet');
       }
 
       let attachments;
@@ -372,38 +371,42 @@ app.http('ticketReply', {
         });
         // First STAFF reply only -- this is the SLA "first response" clock,
         // and only a real client-visible reply should stop it (an internal
-        // note or a status change doesn't count as responding). A silent
-        // notify:false Save is the same kind of non-communication as an
-        // internal note (see ticketNoteAdd below, which never touches either
-        // field for exactly this reason) -- it doesn't tell the client
-        // anything, so it shouldn't stop the SLA clock or make the ticket
-        // look freshly worked in the queue's aging indicator either.
-        if (notify) {
-          const metaUpdate = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
-          if (!meta.firstRespondedAt) metaUpdate.firstRespondedAt = now;
-          await table.updateEntity(metaUpdate, 'Merge');
-        }
+        // note or a status change doesn't count as responding). Every call
+        // that reaches this endpoint is a real, client-facing communication
+        // (a silent internal attach goes through the separate ticket-level
+        // linked-sheets endpoints below instead), so this always applies.
+        const metaUpdate = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
+        if (!meta.firstRespondedAt) metaUpdate.firstRespondedAt = now;
+        await table.updateEntity(metaUpdate, 'Merge');
       } catch (e) {
         await deleteAttachments(ticketId, attachments);
         // The message row above may have been created successfully even
-        // though a later step failed (the meta Merge above, when notify is
-        // true; e.g. the ticket was deleted out from under this request
-        // between the two calls) -- clean it up too, not just the
-        // attachments, so a failed reply never leaves a message behind. A
-        // no-op (safely swallowed) if createEntity itself is what failed and
-        // the row was never written.
+        // though the following Merge failed (e.g. the ticket was deleted out
+        // from under this request between the two calls) -- clean it up too,
+        // not just the attachments, so a failed reply never leaves a message
+        // behind. A no-op (safely swallowed) if createEntity itself is what
+        // failed and the row was never written.
         await table.deleteEntity(ticketId, messageRowKey).catch(() => {});
         throw e;
       }
 
-      audit(context, user, 'ticket.reply', { ticketId, notify });
+      audit(context, user, 'ticket.reply', { ticketId });
 
-      if (notify && meta.email) {
+      if (meta.email) {
         try {
           const clientToken = await getOrCreateClientToken(meta.email);
           const link = buildTrackingLink(meta.email, clientToken, ticketId);
+          // text can be empty now (the reply box's "Send" button shares a
+          // linked sheet with no message) -- skip the empty paragraph
+          // rather than mailing a blank line, and list any linked sheet as
+          // a direct clickable link rather than making the client dig for
+          // it in the tracking portal.
+          const bodyHtml = text ? `<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>` : '';
+          const sheetsHtml = linkedSheets.length
+            ? `<p>${linkedSheets.map((s) => `📊 <a href="${escapeHtml(s.permalink)}">${escapeHtml(s.name)}</a>`).join('<br/>')}</p>`
+            : '';
           const html = `<p>Hi ${escapeHtml(meta.name)},</p>
-<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+${bodyHtml}${sheetsHtml}
 <p><a href="${escapeHtml(link)}">View this ticket and reply online</a></p>
 <p>— Jet City IT Help Desk<br/>Ticket ${escapeHtml(ticketId)}</p>`;
           await sendMail({ from: SUPPORT_MAILBOX, to: meta.email, subject: `Re: ${meta.subject} [${ticketId}]`, html });
@@ -418,6 +421,120 @@ app.http('ticketReply', {
       // access revoked, or a stale picker cache) rather than that sheet just
       // quietly not being in the reply with no indication why.
       return { status: 201, jsonBody: { ok: true, linkedSheets } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+const MAX_TICKET_LINKED_SHEETS = 10;
+
+// A ticket-level linked Smartsheet -- same idea as `assetId` above (a
+// staff-only attribute OF the ticket), not a reply/message and never
+// emailed or shown to the client. Its own small add/remove endpoints
+// rather than folding into ticketUpdate's PATCH, since this is an
+// add/remove-one-item operation on a list, not a "replace the whole
+// field" one like assetId.
+app.http('ticketLinkedSheetAdd', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'tickets/{ticketId}/linked-sheets',
+  handler: async (request, context) => {
+    try {
+      const user = await requireStaff(request);
+      const { ticketId } = request.params;
+      const body = await request.json().catch(() => ({}));
+      const sheetId = String(body.sheetId || '').trim();
+      if (!sheetId) throw new AuthError(400, 'sheetId is required');
+
+      await ensureTable();
+      const table = getClient();
+
+      let meta;
+      try {
+        meta = await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+
+      // Re-resolved against our own server-side Smartsheet lookup, same
+      // "never trust client-supplied name/permalink" reasoning as
+      // ticketReply's linkedSheetIds above.
+      let resolved;
+      try {
+        resolved = await resolveLinkedSheets([sheetId]);
+      } catch (e) {
+        if (e instanceof SmartsheetError) throw new AuthError(502, e.message);
+        throw e;
+      }
+      if (!resolved.length) throw new AuthError(400, 'That sheet could not be found');
+      const sheet = resolved[0];
+
+      const existing = parseLinkedSheets(meta.linkedSheetsJson);
+      if (existing.some((s) => s.id === sheet.id)) {
+        return { jsonBody: { ok: true, linkedSheets: existing } }; // already linked -- no-op, not an error
+      }
+      if (existing.length >= MAX_TICKET_LINKED_SHEETS) {
+        throw new AuthError(400, `A ticket can have at most ${MAX_TICKET_LINKED_SHEETS} linked sheets`);
+      }
+      const updated = existing.concat([sheet]);
+
+      await table.updateEntity({
+        partitionKey: ticketId,
+        rowKey: '0',
+        linkedSheetsJson: JSON.stringify(updated),
+        updatedAt: new Date().toISOString(),
+      }, 'Merge');
+
+      await recordActivity(table, ticketId, `${user.name || user.upn} linked Smartsheet "${sheet.name}"`);
+      audit(context, user, 'ticket.linkedSheet.add', { ticketId, sheetId: sheet.id });
+
+      return { jsonBody: { ok: true, linkedSheets: updated } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+app.http('ticketLinkedSheetRemove', {
+  methods: ['DELETE'],
+  authLevel: 'anonymous',
+  route: 'tickets/{ticketId}/linked-sheets/{sheetId}',
+  handler: async (request, context) => {
+    try {
+      const user = await requireStaff(request);
+      const { ticketId, sheetId } = request.params;
+
+      await ensureTable();
+      const table = getClient();
+
+      let meta;
+      try {
+        meta = await table.getEntity(ticketId, '0');
+      } catch (e) {
+        if (e.statusCode === 404) return { status: 404, jsonBody: { error: 'Ticket not found' } };
+        throw e;
+      }
+
+      const existing = parseLinkedSheets(meta.linkedSheetsJson);
+      const removed = existing.find((s) => s.id === sheetId);
+      if (!removed) {
+        return { jsonBody: { ok: true, linkedSheets: existing } }; // already gone -- no-op, not an error
+      }
+      const updated = existing.filter((s) => s.id !== sheetId);
+
+      await table.updateEntity({
+        partitionKey: ticketId,
+        rowKey: '0',
+        linkedSheetsJson: updated.length ? JSON.stringify(updated) : '',
+        updatedAt: new Date().toISOString(),
+      }, 'Merge');
+
+      await recordActivity(table, ticketId, `${user.name || user.upn} unlinked Smartsheet "${removed.name}"`);
+      audit(context, user, 'ticket.linkedSheet.remove', { ticketId, sheetId });
+
+      return { jsonBody: { ok: true, linkedSheets: updated } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
@@ -652,7 +769,32 @@ app.http('ticketMerge', {
       }
 
       const totalTimeMinutes = (targetMeta.totalTimeMinutes || 0) + (sourceMeta.totalTimeMinutes || 0);
-      await table.updateEntity({ partitionKey: targetId, rowKey: '0', updatedAt: new Date().toISOString(), totalTimeMinutes }, 'Merge');
+      // Ticket-level linked sheets (staff-only, see metaToJson) live on the
+      // meta row itself, not a migratable message/note row -- union them by
+      // id (TARGET first, so an identical sheet linked on both keeps the
+      // target's own copy, and the target's own sheets are never the ones
+      // truncated if the combined count is over the cap) rather than
+      // letting the source's silently vanish once its meta row is deleted
+      // below.
+      const combinedLinkedSheets = parseLinkedSheets(targetMeta.linkedSheetsJson)
+        .concat(parseLinkedSheets(sourceMeta.linkedSheetsJson))
+        .filter((s, i, arr) => arr.findIndex((s2) => s2.id === s.id) === i);
+      const mergedLinkedSheets = combinedLinkedSheets.slice(0, MAX_TICKET_LINKED_SHEETS);
+      if (combinedLinkedSheets.length > mergedLinkedSheets.length) {
+        // Same "don't silently lose data, at least log it" spirit as
+        // MERGE_ATTACHMENT_COPY_FAILED above.
+        context.log('MERGE_LINKED_SHEETS_TRUNCATED ' + JSON.stringify({
+          sourceId, targetId,
+          dropped: combinedLinkedSheets.slice(mergedLinkedSheets.length).map((s) => s.id),
+        }));
+      }
+      await table.updateEntity({
+        partitionKey: targetId,
+        rowKey: '0',
+        updatedAt: new Date().toISOString(),
+        totalTimeMinutes,
+        linkedSheetsJson: mergedLinkedSheets.length ? JSON.stringify(mergedLinkedSheets) : '',
+      }, 'Merge');
       await recordActivity(table, targetId, `${user.name || user.upn} merged ticket ${sourceId} ("${sourceMeta.subject}") into this ticket`);
 
       // Delete the meta row FIRST and separately -- this is what makes a

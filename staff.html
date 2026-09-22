@@ -236,6 +236,20 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .reply-save-btn{padding:7px 12px;border:1px solid var(--border);background:var(--surface);border-radius:8px;color:var(--text2);font-weight:600;font-size:12.5px}
 .reply-save-btn:hover{background:var(--bg)}
 .reply-save-btn:disabled{opacity:.6}
+.reply-quicksend-btn{padding:7px 12px;border:1px solid var(--blue);border-radius:8px;background:var(--surface);color:var(--blue);font-weight:600;font-size:12.5px}
+.reply-quicksend-btn:hover{background:var(--blue);color:#fff}
+.reply-quicksend-btn:disabled{opacity:.6}
+
+/* Persistent, staff-only, ticket-level linked-sheets list -- deliberately
+   NOT part of the message thread above (unlike a sheet attached via
+   "Send"/"Send reply", which rides along on one specific sent message and
+   IS client-visible), so it gets its own quiet little card instead of
+   looking like another chat bubble. */
+.ticket-sheets-panel{border-top:1px dashed var(--border);margin-top:18px;padding-top:16px}
+.ticket-sheets-panel-label{font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px}
+.ticket-sheets-panel-label .hint{font-weight:400;color:var(--text3)}
+.ticket-sheets-panel-list{display:flex;flex-wrap:wrap;gap:8px}
+.ticket-sheets-empty{font-size:12.5px;color:var(--text3)}
 
 .note-box{border-top:1px dashed var(--border);margin-top:18px;padding-top:16px}
 .note-box-label{font-size:12px;font-weight:700;color:var(--amber);margin-bottom:8px}
@@ -274,7 +288,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
    opens the real sheet in a new tab, per the "same shape either way" spirit
    of the other chip styles here). */
 .sheet-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px;font-weight:600}
-.sheet-chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet-chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit;text-decoration:none}
 .sheet-chip .remove{background:none;border:none;color:var(--text3);font-size:15px;line-height:1;padding:0;margin-left:2px}
 .sheet-chip .remove:hover{color:var(--red)}
 a.sheet-chip{text-decoration:none}
@@ -580,12 +594,17 @@ a.sheet-chip:hover{background:var(--border)}
               <div class="sheet-picker-list" id="reply-sheet-picker-list"></div>
             </div>
           </div>
-          <button type="button" class="reply-save-btn" id="reply-save-btn" title="Adds this to the ticket without emailing the client">Save</button>
+          <button type="button" class="reply-save-btn" id="reply-save-btn" title="Adds this to the ticket for staff only -- never sent or shown to the client">Save</button>
+          <button type="button" class="reply-quicksend-btn" id="reply-quicksend-btn" title="Emails the client the linked sheet(s) right now, with or without a message">Send</button>
         </div>
         <div class="file-hint">Up to 4 images, 10 MB each.</div>
         <div class="file-list" id="reply-file-list"></div>
         <div class="file-list" id="reply-sheet-list"></div>
         <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
+        <div class="ticket-sheets-panel">
+          <div class="ticket-sheets-panel-label">📊 Linked Smartsheets <span class="hint">(staff only, never sent to the client)</span></div>
+          <div class="ticket-sheets-panel-list" id="ticket-sheets-list"></div>
+        </div>
       </div>
       <div class="note-box">
         <div class="note-box-label">📝 Internal note -- staff only, never sent to the client</div>
@@ -1864,6 +1883,7 @@ async function openTicket(id){
   document.getElementById('delete-ticket-btn').disabled = true;
   document.getElementById('save-meta-btn').disabled = true;
   document.getElementById('merge-row').hidden = true; // stale target options would otherwise carry over from whatever ticket was open before
+  document.getElementById('ticket-sheets-list').innerHTML = ''; // otherwise the previous ticket's linked sheets would flash before this one's load in
   document.getElementById('thread').innerHTML = 'Loading…';
   try {
     const t = await apiFetch('/tickets/' + encodeURIComponent(id));
@@ -1915,10 +1935,45 @@ async function openTicket(id){
       '</div>';
     }).join('');
     loadAttachmentThumbs(thread);
+    renderTicketSheetsPanel(t.linkedSheets);
   } catch (e) {
     document.getElementById('thread').innerHTML = 'Failed to load ticket: ' + escapeHtml(e.message);
   }
 }
+
+// The ticket-level linked-sheets panel -- staff-only, persistent, never
+// part of the thread. Each chip's × calls the same delete endpoint
+// immediately (no separate "save" step to remove one, matching how quick
+// "the ability to remove it" was asked for).
+function renderTicketSheetsPanel(linkedSheets){
+  const list = document.getElementById('ticket-sheets-list');
+  if (!linkedSheets || !linkedSheets.length) {
+    list.innerHTML = '<div class="ticket-sheets-empty">None linked yet.</div>';
+    return;
+  }
+  list.innerHTML = linkedSheets.map(function(s){
+    return '<div class="sheet-chip">' +
+      '<a class="name" href="' + escapeHtml(s.permalink) + '" target="_blank" rel="noopener">📊 ' + escapeHtml(s.name) + '</a>' +
+      '<button type="button" class="remove" data-id="' + escapeHtml(s.id) + '" data-name="' + escapeHtml(s.name) + '" aria-label="Unlink ' + escapeHtml(s.name) + '">×</button>' +
+    '</div>';
+  }).join('');
+}
+
+document.getElementById('ticket-sheets-list').addEventListener('click', async function(e){
+  const btn = e.target.closest('.remove');
+  if (!btn) return;
+  if (!confirm('Unlink "' + btn.dataset.name + '" from this ticket?')) return;
+  btn.disabled = true;
+  try {
+    const resp = await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/linked-sheets/' + encodeURIComponent(btn.dataset.id), {
+      method: 'DELETE',
+    });
+    renderTicketSheetsPanel(resp.linkedSheets);
+  } catch (e2) {
+    alert('Failed to unlink: ' + e2.message);
+    btn.disabled = false;
+  }
+});
 
 function attachmentsHtml(ticketId, attachments){
   if (!attachments || !attachments.length) return '';
@@ -2215,33 +2270,36 @@ function fileToBase64(file){
   });
 }
 
-// Shared by both reply-box buttons. `notify` true = "Send reply" (unchanged
-// behavior: always requires an actual message, always emails the client if
-// one's on file). `notify` false = "Save" -- attaches whatever's staged
-// (typically just a linked sheet, but text/images work too) to the ticket
-// with no email, for cases like the tech's own working notes/references
-// that don't warrant pinging the requester. Server-side enforces the same
-// "needs SOME content" rule either way (tickets.js's ticketReply).
-async function submitReply(notify){
+// Three reply-box buttons, all consuming the SAME staged draft
+// (text/files/sheets), so all three are disabled together for the whole
+// request -- otherwise clicking two before the first resolves could
+// double up on the same staged sheet (e.g. both save it privately AND
+// email it in the same moment).
+function setReplyButtonsDisabled(disabled){
+  document.getElementById('reply-send-btn').disabled = disabled;
+  document.getElementById('reply-quicksend-btn').disabled = disabled;
+  document.getElementById('reply-save-btn').disabled = disabled;
+}
+
+// Shared by "Send reply" (bottom, always requires typed text) and "Send"
+// (next to Link Smartsheet, shares whatever's staged -- typically just a
+// linked sheet -- with no text required). Both create a real, client-facing
+// reply: an emailed message the requester will see in their own thread.
+// `requireText` is a client-side-only gate for which button this is; the
+// server itself just needs SOME content either way (tickets.js's
+// ticketReply).
+async function submitReply(requireText){
   const ta = document.getElementById('reply-body');
   const text = ta.value.trim();
   const hasContent = text || replySelectedFiles.length || replySelectedSheets.length;
-  if (notify) {
+  if (requireText) {
     if (!text) return; // Send reply always needs an actual message for the client
   } else if (!hasContent) {
-    alert('Add a message, attachment, or linked sheet before saving.');
+    alert('Add a message, attachment, or linked sheet before sending.');
     return;
   }
-  // Both buttons submit the SAME staged draft (text/files/sheets), so both
-  // are disabled together for the whole request -- otherwise clicking Send
-  // then Save (or the reverse) before the first request resolves could fire
-  // both, creating two message rows from one draft with conflicting notify
-  // values, one of which would email the client unexpectedly.
-  const sendBtn = document.getElementById('reply-send-btn');
-  const saveBtn = document.getElementById('reply-save-btn');
-  if (sendBtn.disabled || saveBtn.disabled) return; // a submission is already in flight
-  sendBtn.disabled = true;
-  saveBtn.disabled = true;
+  if (document.getElementById('reply-send-btn').disabled) return; // a submission is already in flight
+  setReplyButtonsDisabled(true);
   try {
     const attachments = await Promise.all(replySelectedFiles.map(async function(f){
       return { fileName: f.name, dataBase64: await fileToBase64(f) };
@@ -2249,7 +2307,7 @@ async function submitReply(notify){
     const requestedSheetCount = replySelectedSheets.length;
     const resp = await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
       method: 'POST',
-      body: JSON.stringify({ body: text, attachments: attachments, linkedSheetIds: replySelectedSheets.map(function(s){ return s.id; }), notify: notify }),
+      body: JSON.stringify({ body: text, attachments: attachments, linkedSheetIds: replySelectedSheets.map(function(s){ return s.id; }) }),
     });
     ta.value = '';
     replySelectedFiles = [];
@@ -2266,15 +2324,53 @@ async function submitReply(notify){
       alert((requestedSheetCount - linkedCount) + ' linked sheet(s) could not be found and were not included. They may have been deleted or your sheet list may be stale -- try reopening the picker.');
     }
   } catch (e) {
-    alert('Failed to ' + (notify ? 'send reply' : 'save') + ': ' + e.message);
+    alert('Failed to send: ' + e.message);
   } finally {
-    sendBtn.disabled = false;
-    saveBtn.disabled = false;
+    setReplyButtonsDisabled(false);
   }
 }
 
 document.getElementById('reply-send-btn').addEventListener('click', function(){ submitReply(true); });
-document.getElementById('reply-save-btn').addEventListener('click', function(){ submitReply(false); });
+document.getElementById('reply-quicksend-btn').addEventListener('click', function(){ submitReply(false); });
+
+// "Save" -- unlike the two buttons above, this never touches the message
+// thread or emails anyone: it adds the staged sheet(s) straight to the
+// ticket's own staff-only linked-sheets list (same idea as "Linked asset"
+// in the ticket header), rendered in the persistent panel below rather
+// than as a chat bubble.
+document.getElementById('reply-save-btn').addEventListener('click', async function(){
+  if (!replySelectedSheets.length) { alert('Pick a sheet to save first.'); return; }
+  if (document.getElementById('reply-send-btn').disabled) return; // a submission is already in flight
+  setReplyButtonsDisabled(true);
+  const toSave = replySelectedSheets.slice();
+  let savedCount = 0;
+  let failure = null;
+  try {
+    for (const s of toSave) {
+      try {
+        await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/linked-sheets', {
+          method: 'POST',
+          body: JSON.stringify({ sheetId: s.id }),
+        });
+        savedCount++;
+      } catch (e) {
+        failure = e;
+        break; // stop at the first failure rather than firing the rest blind
+      }
+    }
+    // Reload regardless of a partial failure, so the persistent panel
+    // reflects whatever DID save server-side instead of going stale --
+    // this also clears the staging area either way (openTicket's usual
+    // draft reset), so a partial failure doesn't leave already-saved
+    // sheets still staged for a confusing re-submit.
+    await openTicket(currentTicketId);
+    if (failure) {
+      alert((savedCount > 0 ? savedCount + ' of ' + toSave.length + ' sheet(s) saved before this failed: ' : 'Failed to save: ') + failure.message);
+    }
+  } finally {
+    setReplyButtonsDisabled(false);
+  }
+});
 
 document.getElementById('note-send-btn').addEventListener('click', async function(){
   const ta = document.getElementById('note-body');

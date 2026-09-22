@@ -719,12 +719,24 @@ just being formally closed out — the rating survives that transition.
 ## Smartsheet linking
 
 `staff.html`'s reply box has a "📊 Link Smartsheet" button next to the
-attachment picker, on every ticket. Picking a sheet adds it to the reply;
-once sent, it renders as a clickable chip that opens the real sheet on
-smartsheet.com in a new tab. It's part of the reply message itself, so it's
-just as visible to the client as an attached screenshot — on `/track.html`
-and the Organization Portal (`/team.html`), not staff-only like an internal
-note.
+attachment picker, on every ticket, plus three ways to commit a picked
+sheet — **two fundamentally different kinds of "linked"**, not variations
+on one mechanism:
+
+- **"Save"** — adds the sheet to the ticket's own staff-only
+  `linkedSheets` list (the same idea as the "Linked asset" field in the
+  ticket header), shown in a persistent panel below the reply box, each
+  removable with its own × at any time. This is a property OF THE TICKET,
+  never part of the message thread, never emailed, never visible to the
+  client anywhere (`/track.html`, the Organization Portal) — the default,
+  since by default **the requester should never receive a linked sheet at
+  all**.
+- **"Send"** and **"Send reply"** — attach the sheet to an actual outgoing
+  reply instead: a `kind: 'message'` row that IS emailed to the requester
+  and IS visible in their own thread, same as an attached screenshot.
+  "Send" fires immediately with no reply text required (for "the client
+  asked for this sheet, hand it over now"); "Send reply" is the ordinary
+  compose-a-message button and still always requires actual text.
 
 **Auth**: a single shared Smartsheet Personal Access Token
 (`SMARTSHEET_API_TOKEN` app setting) for the whole team, not per-staff OAuth
@@ -746,80 +758,87 @@ human, never handled by Claude.
   rather than surfaced — that field is rendered as a live, clickable
   `<a href>` shown to clients too, so it's validated at the source instead
   of trusted blindly just because it came back from Smartsheet's own API.
-- **The reply endpoint never trusts client-supplied sheet name/permalink
-  text.** The frontend only ever sends `linkedSheetIds` (bare ids);
-  `ticketReply` calls `resolveLinkedSheets()` (`api/src/lib/smartsheet.js`),
-  which caps at 5 per reply and re-resolves each id against its own
-  server-side sheet list, storing exactly what Smartsheet itself returned.
-  Without this, a malicious or compromised staff-side request could attach
-  an arbitrary "Linked Smartsheet" chip pointing anywhere it likes, rendered
-  as a trusted-looking link in front of the client — the same class of
-  "never trust the client's declared value" reasoning already applied to
-  attachment content-type sniffing above. This resolution runs *before*
-  `storeAttachments()` in `ticketReply`, deliberately: it's a cheap,
-  side-effect-free lookup, so if Smartsheet is unreachable there's nothing
-  to clean up yet — resolving it after attachments were already uploaded
-  would risk orphaning those blobs with no cleanup path if the Smartsheet
-  call then failed.
+- **Neither commit path trusts client-supplied sheet name/permalink
+  text.** The frontend only ever sends bare sheet ids; both
+  `ticketReply` (for Send/Send reply) and the new
+  `ticketLinkedSheetAdd` (for Save) call `resolveLinkedSheets()`/
+  re-resolve against `listSheets()` (`api/src/lib/smartsheet.js`),
+  storing exactly what Smartsheet itself returned. Without this, a
+  malicious or compromised staff-side request could attach an arbitrary
+  "Linked Smartsheet" chip pointing anywhere it likes — rendered as a
+  trusted-looking link in front of the client for Send/Send reply, or
+  just presented to staff for Save — the same class of "never trust the
+  client's declared value" reasoning already applied to attachment
+  content-type sniffing above. `ticketReply` resolves its sheets *before*
+  `storeAttachments()`: a cheap, side-effect-free lookup, so if Smartsheet
+  is unreachable there's nothing to clean up yet — resolving it after
+  attachments were already uploaded would risk orphaning those blobs with
+  no cleanup path if the Smartsheet call then failed.
 - An id that doesn't resolve (sheet deleted, access to it revoked from the
   shared token's account, or — since each Function instance caches the
   sheet list independently — briefly stale across instances) is silently
-  dropped rather than failing the whole reply. `ticketReply`'s response
-  echoes back exactly which sheets were actually linked
-  (`{ok: true, linkedSheets: [...]}`), and `staff.html` compares that count
-  against how many the staff member picked, warning them if fewer made it
-  in rather than a sheet just quietly vanishing from the sent reply.
-- Stored as `linkedSheetsJson` on the message row (parallel to
-  `attachmentsJson`, parsed the same defensive way), surfaced as
-  `linkedSheets: [{id, name, permalink}]` in `messageToJson`/
-  `messageToClientJson`/`messageToOrgJson`. `ticketMerge` copies it straight
-  across when migrating a message row — unlike an attachment, a linked
-  sheet has no blob to re-upload, it's just metadata.
+  dropped by `ticketReply` rather than failing the whole reply (its
+  response echoes back exactly which sheets were actually linked, and
+  `staff.html` warns if fewer made it in than were picked) — but is a hard
+  400 for `ticketLinkedSheetAdd`, since that's a single, deliberate,
+  one-sheet action with no reason to silently do nothing.
+- **Two separate storage locations, matching the two separate concepts.**
+  A Send/Send-reply sheet is stored as `linkedSheetsJson` on the MESSAGE
+  row (parallel to `attachmentsJson`), surfaced as `linkedSheets` in
+  `messageToJson`/`messageToClientJson`/`messageToOrgJson`. A Saved sheet
+  is stored as `linkedSheetsJson` on the ticket's own META row instead —
+  same field name, different row, staff-only — surfaced as `linkedSheets`
+  in `metaToJson` but deliberately **not** added to
+  `ticketToClientJson`/`ticketToOrgJson` (matching `assetId`, which
+  follows the identical staff-only pattern). `ticketMerge` handles both:
+  message-level sheets migrate with their row same as any attachment
+  metadata; ticket-level sheets are unioned (target's own list first, then
+  source's, deduped by id) into the target's own list when the source
+  ticket is merged away, since that data would otherwise silently vanish
+  with the deleted source meta row. Target-first means an identical sheet
+  linked on both keeps the target's own copy, and the target's own sheets
+  are never the ones a `MAX_TICKET_LINKED_SHEETS` (10) overflow truncates —
+  if the combined count is over that cap, the drop is at least logged
+  (`MERGE_LINKED_SHEETS_TRUNCATED`), matching how a failed attachment copy
+  a few lines earlier in the same function is also logged rather than
+  silently dropped.
 - If `SMARTSHEET_API_TOKEN` isn't set (e.g. before it's configured for the
-  first time), the picker and reply endpoint both surface a plain "Smartsheet
-  is not connected yet" error rather than a raw failure — everything else
-  about replying to a ticket keeps working normally. The picker doesn't cache
-  a failed load, so it retries cleanly on the next open instead of replaying
-  the same stale error for the rest of the session once the token's added.
+  first time), the picker, `ticketReply`, and `ticketLinkedSheetAdd` all
+  surface a plain "Smartsheet is not connected yet" error rather than a raw
+  failure — everything else about replying to or updating a ticket keeps
+  working normally. The picker doesn't cache a failed load, so it retries
+  cleanly on the next open instead of replaying the same stale error for
+  the rest of the session once the token's added.
 - Switching to a different ticket clears any unsent reply/note draft,
   staged image attachments, AND any staged Smartsheet pick — all four
   together, in `openTicket()`. Without this, a draft (including a live link
   to internal Smartsheet content) staged for one ticket could get sent to a
   completely different client if staff switched tickets mid-draft and then
   hit Send without noticing.
-- A **"Save"** button sits next to "Link Smartsheet", for attaching a linked
-  sheet (or a message/attachment) to the ticket without emailing the
-  requester — e.g. a reference doc that's only useful internally, not
-  something the client needs a notification about. It posts to the same
-  `POST /api/tickets/{id}/replies` with `notify: false`; `ticketReply`
-  defaults `notify` to `true` (every other caller is unaffected) and simply
-  skips the `sendMail()` call when it's `false`. Unlike "Send reply" (which
-  still always requires an actual message), a `notify: false` save just
-  needs *something* — text, an attachment, or a linked sheet — checked
-  server-side before any attachment is uploaded, so a rejection here can't
-  orphan a blob the same way the ordering fix above prevents for a
-  Smartsheet failure. The row it creates is an ordinary `kind: 'message'`
-  row either way, so it's just as visible to the client the next time they
-  check `/track.html` or the Organization Portal — "Save" only skips the
-  proactive email, it doesn't hide the content.
-- A `notify: false` save is treated like an internal note for bookkeeping
-  purposes, not like a real reply: it does NOT set `firstRespondedAt` (the
-  SLA "first response" clock) or bump the ticket's `updatedAt` (the queue's
-  aging/staleness indicator). Same reasoning `ticketNoteAdd` already uses —
-  a silent attach that never reaches the client shouldn't make a genuinely
-  unanswered ticket look responded-to or recently-worked, which would
-  otherwise both suppress a real SLA escalation and hide a stale ticket from
-  staff. Only a `notify: true` reply (the unchanged "Send reply" path)
-  touches either field.
-- The reply box's two buttons ("Send reply" and "Save") share one draft
-  (typed text, staged attachments, staged sheets), so both are disabled
-  together for the whole submit — not just the one clicked — while a
-  request is in flight. Otherwise clicking one and then the other before the
-  first finishes could fire both requests off the same staged draft, one
-  with `notify: true` and one with `notify: false`, creating two message
-  rows and unexpectedly emailing the client from what looked like a "Save."
-
-## Email notifications
+- A Saved sheet is bookkept like an internal note, not like a real reply:
+  `ticketLinkedSheetAdd`/`ticketLinkedSheetRemove` bump `updatedAt` (a
+  genuine staff touch on the ticket, same as changing status/category/
+  assignee/asset already does) but never `firstRespondedAt` (the SLA
+  "first response" clock) — only an actual Send/Send-reply, a real
+  client-facing communication, stops that clock. A Save that quietly set
+  `firstRespondedAt` could mask a genuine SLA breach on a ticket the client
+  was never actually told anything about.
+- All three reply-box buttons ("Send reply", "Send", "Save") share one
+  staged draft/selection, so all three are disabled together for the whole
+  submit — not just the one clicked — while any one request is in flight.
+  Otherwise clicking two of them before the first resolves could act on the
+  same staged sheet twice (e.g. both privately save it AND email it in the
+  same moment).
+- **Known, accepted limitation**: `ticketLinkedSheetAdd`/`Remove` read the
+  ticket's current linked-sheets list, then write back a modified copy,
+  with no optimistic-concurrency check in between — two staff editing the
+  same ticket's linked sheets within the same moment could have one
+  overwrite the other's change. This is the same non-atomic
+  read-then-write shape `ticketUpdate` already has for every other ticket
+  field (status/priority/assignee/asset), not a new gap this feature
+  introduces, and not worth a bespoke fix here (ETags/If-Match) while nothing
+  else in this app has one either — recoverable in practice by just
+  re-adding the lost sheet.
 
 A staff reply also emails the requester (from `helpdesk@jetcityit.com`, a
 real shared mailbox with sign-in disabled — same setup pattern as the

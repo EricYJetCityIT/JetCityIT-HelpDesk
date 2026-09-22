@@ -2196,7 +2196,14 @@ function renderReplySheetList(){
 function renderSheetPickerList(sheets, query){
   const list = document.getElementById('reply-sheet-picker-list');
   const q = query.trim().toLowerCase();
-  const filtered = q ? sheets.filter(function(s){ return s.name.toLowerCase().indexOf(q) !== -1; }) : sheets;
+  // Matches by name OR by permalink -- pasting a sheet's own Smartsheet URL
+  // (copied straight from the browser's address bar) finds it just like
+  // typing its name does, since we already have every sheet's real
+  // permalink from the same Smartsheet lookup that backs this list.
+  const filtered = q ? sheets.filter(function(s){
+    return s.name.toLowerCase().indexOf(q) !== -1 ||
+      (s.permalink && s.permalink.toLowerCase().indexOf(q) !== -1);
+  }) : sheets;
   if (!filtered.length) {
     list.innerHTML = '<div class="sheet-picker-empty">' + (sheets.length ? 'No matching sheets' : 'No sheets found') + '</div>';
     return;

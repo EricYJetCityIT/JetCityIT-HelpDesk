@@ -233,6 +233,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .reply-send-btn{padding:9px 18px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:600;font-size:14px}
 .reply-send-btn:hover{background:var(--green-dark)}
 .reply-send-btn:disabled{opacity:.6}
+.reply-save-btn{padding:7px 12px;border:1px solid var(--border);background:var(--surface);border-radius:8px;color:var(--text2);font-weight:600;font-size:12.5px}
+.reply-save-btn:hover{background:var(--bg)}
+.reply-save-btn:disabled{opacity:.6}
 
 .note-box{border-top:1px dashed var(--border);margin-top:18px;padding-top:16px}
 .note-box-label{font-size:12px;font-weight:700;color:var(--amber);margin-bottom:8px}
@@ -577,6 +580,7 @@ a.sheet-chip:hover{background:var(--border)}
               <div class="sheet-picker-list" id="reply-sheet-picker-list"></div>
             </div>
           </div>
+          <button type="button" class="reply-save-btn" id="reply-save-btn" title="Adds this to the ticket without emailing the client">Save</button>
         </div>
         <div class="file-hint">Up to 4 images, 10 MB each.</div>
         <div class="file-list" id="reply-file-list"></div>
@@ -2211,12 +2215,33 @@ function fileToBase64(file){
   });
 }
 
-document.getElementById('reply-send-btn').addEventListener('click', async function(){
+// Shared by both reply-box buttons. `notify` true = "Send reply" (unchanged
+// behavior: always requires an actual message, always emails the client if
+// one's on file). `notify` false = "Save" -- attaches whatever's staged
+// (typically just a linked sheet, but text/images work too) to the ticket
+// with no email, for cases like the tech's own working notes/references
+// that don't warrant pinging the requester. Server-side enforces the same
+// "needs SOME content" rule either way (tickets.js's ticketReply).
+async function submitReply(notify){
   const ta = document.getElementById('reply-body');
   const text = ta.value.trim();
-  if (!text) return;
-  const btn = this;
-  btn.disabled = true;
+  const hasContent = text || replySelectedFiles.length || replySelectedSheets.length;
+  if (notify) {
+    if (!text) return; // Send reply always needs an actual message for the client
+  } else if (!hasContent) {
+    alert('Add a message, attachment, or linked sheet before saving.');
+    return;
+  }
+  // Both buttons submit the SAME staged draft (text/files/sheets), so both
+  // are disabled together for the whole request -- otherwise clicking Send
+  // then Save (or the reverse) before the first request resolves could fire
+  // both, creating two message rows from one draft with conflicting notify
+  // values, one of which would email the client unexpectedly.
+  const sendBtn = document.getElementById('reply-send-btn');
+  const saveBtn = document.getElementById('reply-save-btn');
+  if (sendBtn.disabled || saveBtn.disabled) return; // a submission is already in flight
+  sendBtn.disabled = true;
+  saveBtn.disabled = true;
   try {
     const attachments = await Promise.all(replySelectedFiles.map(async function(f){
       return { fileName: f.name, dataBase64: await fileToBase64(f) };
@@ -2224,7 +2249,7 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
     const requestedSheetCount = replySelectedSheets.length;
     const resp = await apiFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
       method: 'POST',
-      body: JSON.stringify({ body: text, attachments: attachments, linkedSheetIds: replySelectedSheets.map(function(s){ return s.id; }) }),
+      body: JSON.stringify({ body: text, attachments: attachments, linkedSheetIds: replySelectedSheets.map(function(s){ return s.id; }), notify: notify }),
     });
     ta.value = '';
     replySelectedFiles = [];
@@ -2238,14 +2263,18 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
     // sheet just quietly missing from the sent reply with no explanation.
     const linkedCount = (resp.linkedSheets || []).length;
     if (linkedCount < requestedSheetCount) {
-      alert((requestedSheetCount - linkedCount) + ' linked sheet(s) could not be found and were not included in the reply. They may have been deleted or your sheet list may be stale -- try reopening the picker.');
+      alert((requestedSheetCount - linkedCount) + ' linked sheet(s) could not be found and were not included. They may have been deleted or your sheet list may be stale -- try reopening the picker.');
     }
   } catch (e) {
-    alert('Failed to send reply: ' + e.message);
+    alert('Failed to ' + (notify ? 'send reply' : 'save') + ': ' + e.message);
   } finally {
-    btn.disabled = false;
+    sendBtn.disabled = false;
+    saveBtn.disabled = false;
   }
-});
+}
+
+document.getElementById('reply-send-btn').addEventListener('click', function(){ submitReply(true); });
+document.getElementById('reply-save-btn').addEventListener('click', function(){ submitReply(false); });
 
 document.getElementById('note-send-btn').addEventListener('click', async function(){
   const ta = document.getElementById('note-body');

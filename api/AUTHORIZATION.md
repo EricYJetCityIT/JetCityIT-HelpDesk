@@ -787,6 +787,37 @@ human, never handled by Claude.
   to internal Smartsheet content) staged for one ticket could get sent to a
   completely different client if staff switched tickets mid-draft and then
   hit Send without noticing.
+- A **"Save"** button sits next to "Link Smartsheet", for attaching a linked
+  sheet (or a message/attachment) to the ticket without emailing the
+  requester — e.g. a reference doc that's only useful internally, not
+  something the client needs a notification about. It posts to the same
+  `POST /api/tickets/{id}/replies` with `notify: false`; `ticketReply`
+  defaults `notify` to `true` (every other caller is unaffected) and simply
+  skips the `sendMail()` call when it's `false`. Unlike "Send reply" (which
+  still always requires an actual message), a `notify: false` save just
+  needs *something* — text, an attachment, or a linked sheet — checked
+  server-side before any attachment is uploaded, so a rejection here can't
+  orphan a blob the same way the ordering fix above prevents for a
+  Smartsheet failure. The row it creates is an ordinary `kind: 'message'`
+  row either way, so it's just as visible to the client the next time they
+  check `/track.html` or the Organization Portal — "Save" only skips the
+  proactive email, it doesn't hide the content.
+- A `notify: false` save is treated like an internal note for bookkeeping
+  purposes, not like a real reply: it does NOT set `firstRespondedAt` (the
+  SLA "first response" clock) or bump the ticket's `updatedAt` (the queue's
+  aging/staleness indicator). Same reasoning `ticketNoteAdd` already uses —
+  a silent attach that never reaches the client shouldn't make a genuinely
+  unanswered ticket look responded-to or recently-worked, which would
+  otherwise both suppress a real SLA escalation and hide a stale ticket from
+  staff. Only a `notify: true` reply (the unchanged "Send reply" path)
+  touches either field.
+- The reply box's two buttons ("Send reply" and "Save") share one draft
+  (typed text, staged attachments, staged sheets), so both are disabled
+  together for the whole submit — not just the one clicked — while a
+  request is in flight. Otherwise clicking one and then the other before the
+  first finishes could fire both requests off the same staged draft, one
+  with `notify: true` and one with `notify: false`, creating two message
+  rows and unexpectedly emailing the client from what looked like a "Save."
 
 ## Email notifications
 

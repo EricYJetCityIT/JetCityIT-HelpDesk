@@ -300,7 +300,15 @@ app.http('ticketReply', {
 
       const body = await request.json().catch(() => ({}));
       const text = String(body.body || '').trim().slice(0, 5000);
-      if (!text) throw new AuthError(400, 'Reply body is required');
+      // notify defaults to true (every existing caller sends a real message
+      // and expects the client to hear about it) -- explicitly false is how
+      // the reply box's "Save" action attaches something (typically just a
+      // linked sheet) to the ticket without emailing the requester. A real
+      // notified reply still always needs an actual message, same as before
+      // this existed; a silent save just needs SOMETHING (checked below,
+      // once attachments/linkedSheets are known).
+      const notify = body.notify !== false;
+      if (notify && !text) throw new AuthError(400, 'Reply body is required');
 
       await ensureTable();
       const table = getClient();
@@ -331,6 +339,15 @@ app.http('ticketReply', {
         throw e;
       }
 
+      // Checked here (before storeAttachments runs) rather than after, so a
+      // rejection never has to unwind an attachment blob that was already
+      // uploaded -- same reasoning as resolving linkedSheets before
+      // storeAttachments above.
+      const hasRequestedAttachments = Array.isArray(body.attachments) && body.attachments.length > 0;
+      if (!notify && !text && !linkedSheets.length && !hasRequestedAttachments) {
+        throw new AuthError(400, 'Add a message, attachment, or linked sheet before saving');
+      }
+
       let attachments;
       try {
         attachments = await storeAttachments(ticketId, body.attachments);
@@ -355,25 +372,33 @@ app.http('ticketReply', {
         });
         // First STAFF reply only -- this is the SLA "first response" clock,
         // and only a real client-visible reply should stop it (an internal
-        // note or a status change doesn't count as responding).
-        const metaUpdate = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
-        if (!meta.firstRespondedAt) metaUpdate.firstRespondedAt = now;
-        await table.updateEntity(metaUpdate, 'Merge');
+        // note or a status change doesn't count as responding). A silent
+        // notify:false Save is the same kind of non-communication as an
+        // internal note (see ticketNoteAdd below, which never touches either
+        // field for exactly this reason) -- it doesn't tell the client
+        // anything, so it shouldn't stop the SLA clock or make the ticket
+        // look freshly worked in the queue's aging indicator either.
+        if (notify) {
+          const metaUpdate = { partitionKey: ticketId, rowKey: '0', updatedAt: now };
+          if (!meta.firstRespondedAt) metaUpdate.firstRespondedAt = now;
+          await table.updateEntity(metaUpdate, 'Merge');
+        }
       } catch (e) {
         await deleteAttachments(ticketId, attachments);
         // The message row above may have been created successfully even
-        // though the following Merge failed (e.g. the ticket was deleted out
-        // from under this request between the two calls) -- clean it up too,
-        // not just the attachments, so a failed reply never leaves a message
-        // behind. A no-op (safely swallowed) if createEntity itself is what
-        // failed and the row was never written.
+        // though a later step failed (the meta Merge above, when notify is
+        // true; e.g. the ticket was deleted out from under this request
+        // between the two calls) -- clean it up too, not just the
+        // attachments, so a failed reply never leaves a message behind. A
+        // no-op (safely swallowed) if createEntity itself is what failed and
+        // the row was never written.
         await table.deleteEntity(ticketId, messageRowKey).catch(() => {});
         throw e;
       }
 
-      audit(context, user, 'ticket.reply', { ticketId });
+      audit(context, user, 'ticket.reply', { ticketId, notify });
 
-      if (meta.email) {
+      if (notify && meta.email) {
         try {
           const clientToken = await getOrCreateClientToken(meta.email);
           const link = buildTrackingLink(meta.email, clientToken, ticketId);

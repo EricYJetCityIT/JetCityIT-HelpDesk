@@ -14,6 +14,7 @@ const {
 const { audit } = require('../lib/audit');
 const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { parseLinkedSheets } = require('../lib/smartsheet');
+const { notifyStaffTeam } = require('../lib/staffBroadcast');
 const { clientIp } = require('../lib/ip');
 const { odataEscape } = require('../lib/odata');
 
@@ -273,6 +274,13 @@ app.http('clientTicketReply', {
       } catch (e) {
         context.log('STAFF_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
       }
+
+      await notifyStaffTeam(context, {
+        subject: `Requester replied: ${meta.subject} [${ticketId}]`,
+        html: `<p>${escapeHtml(meta.name)} (${escapeHtml(meta.email)}) replied on ticket ${escapeHtml(ticketId)}:</p>
+<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+<p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
+      });
 
       return { status: 201, jsonBody: { ok: true } };
     } catch (e) {

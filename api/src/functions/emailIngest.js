@@ -5,6 +5,7 @@ const { sendMail, SUPPORT_MAILBOX, getInboxMessagesSince } = require('../lib/gra
 const { escapeHtml } = require('../lib/html');
 const { normalizeEmail } = require('../lib/clientAccess');
 const { requireCronSecret, authErrorResponse } = require('../lib/auth');
+const { notifyStaffTeam } = require('../lib/staffBroadcast');
 
 // Reserved partitions, same pattern as CLIENT/CONFIG/RECURRING elsewhere in
 // this table -- neither row kind is 'meta', so neither surfaces in
@@ -239,4 +240,16 @@ ${staleNote}<p>${escapeHtml(bodyText).replace(/\n/g, '<br/>')}</p>
   } catch (e) {
     context.log('EMAIL_INGEST_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
   }
+
+  // Goes to every staff member's own inbox, unlike the SUPPORT_MAILBOX
+  // notification above -- this poller only ever scans SUPPORT_MAILBOX's
+  // own Inbox, so a broadcast landing in each staff member's personal
+  // mailbox instead can never be picked back up as a fake "reply" by this
+  // same loop.
+  await notifyStaffTeam(context, {
+    subject: `Requester replied: ${meta.subject} [${ticketId}]`,
+    html: `<p>${escapeHtml(fromName)} replied (by email) on ticket ${escapeHtml(ticketId)}:</p>
+<p>${escapeHtml(bodyText).replace(/\n/g, '<br/>')}</p>
+<p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
+  });
 }

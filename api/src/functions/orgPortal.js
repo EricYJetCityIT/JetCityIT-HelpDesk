@@ -36,6 +36,7 @@ const {
   AttachmentError,
 } = require('../lib/attachments');
 const { parseLinkedSheets } = require('../lib/smartsheet');
+const { notifyStaffTeam } = require('../lib/staffBroadcast');
 
 function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -738,6 +739,13 @@ app.http('orgTicketReply', {
       } catch (e) {
         context.log('ORG_REPLY_STAFF_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
       }
+
+      await notifyStaffTeam(context, {
+        subject: `Requester replied: ${meta.subject} [${ticketId}]`,
+        html: `<p><strong>${escapeHtml(session.name)}</strong> (${escapeHtml(session.domain)}) replied on ticket ${escapeHtml(ticketId)}:</p>
+<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+<p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
+      });
 
       return { status: 201, jsonBody: { ok: true } };
     } catch (e) {

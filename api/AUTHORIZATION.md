@@ -862,6 +862,81 @@ logs) but never fails the reply request. The email carries the full reply
 text plus a tracking-page link (see above), so the requester doesn't have
 to go looking for it separately.
 
+## Staff team broadcast
+
+Every staff member (every entry in `STAFF_UPNS`) gets emailed on three
+events, so anyone can notice ticket activity — especially a client
+follow-up sitting unanswered — without actively watching a specific
+ticket or relying on whoever's assigned to flag it themselves:
+
+1. A new ticket is submitted (public form or Organization Portal).
+2. The requester replies (individual tracking portal, Organization Portal,
+   or by replying directly to a notification email).
+3. The ticket's **currently assigned** staff member replies — deliberately
+   scoped to the assignee specifically, not any staff reply, so this
+   answers "did the person this is assigned to actually respond" rather
+   than just "did someone reply."
+
+**Implementation**: `api/src/lib/staffBroadcast.js`'s `notifyStaffTeam(context, {subject, html})`
+sends ONE message with every `STAFF_UPNS` address in the To line (not a
+separate send per person) via the same app-only `sendMail()` used
+everywhere else — `graph.js`'s `sendMail` was extended to accept `to` as
+either a single address or an array for this. Self-swallowing: a failure
+is logged (`STAFF_BROADCAST_FAILED`) but never thrown, so this can never
+block ticket creation or a reply from saving — the same "best-effort,
+never block the core flow" convention every other notification email in
+this app already follows, just centralized in one helper instead of a
+`try/catch` repeated at each of the 5 call sites (`ticketCreation.js`'s
+shared `createTicket()` — covering both the public form and the
+Organization Portal for free; `clientPortal.js`'s `clientTicketReply`;
+`orgPortal.js`'s `orgTicketReply`; `emailIngest.js`'s
+`processInboundMessage`; and `tickets.js`'s `ticketReply`, gated on
+`user.upn === meta.assignee`).
+
+Recurring auto-created tickets (`recurringRun.js`) do NOT trigger the
+new-ticket broadcast — that job builds its ticket rows directly rather
+than through the shared `createTicket()` helper, and its synthetic
+"requester" (the shared support mailbox itself) isn't a real client
+submission in the sense this broadcast is meant to surface.
+
+This is real-time per-event, not a digest — a busy day means a steady
+trickle of these emails to every staff member, by design (the alternative
+of only notifying whoever's assigned would have missed exactly the
+"assignee never got to it" case this exists to catch).
+
+**Rate-limited on the new-ticket broadcast specifically**: `createTicket()`
+is reachable from the public, unauthenticated submission form, and the
+per-assignee "Assigned:" email a few lines below already exists
+specifically because a slow-and-steady or distributed flood can stay
+under the public form's per-IP submit limit while still riding the
+round-robin to spam a person repeatedly. The new-ticket broadcast is
+exposed to the exact same risk — worse, it reaches the *whole team* per
+event instead of one person — so it gets its own shared `checkRateLimit`
+bucket (`staff-broadcast:new-ticket`, 30/hour) rather than firing
+unconditionally like the reply-triggered broadcasts do (those three all
+sit behind an existing per-IP or per-session request-level rate limit of
+their own already).
+
+**`excludeUpn`**: `notifyStaffTeam` accepts an optional `excludeUpn` to
+drop one address from the recipient list — used only by the
+assignee-reply broadcast, so a tech replying to their own assigned ticket
+doesn't get an email telling them they just did that.
+
+**Known, accepted overlap, not a bug**: a new *assigned* ticket sends the
+assignee two separate emails — the pre-existing individual "Assigned:
+..." and this new team-wide "New ticket: ...". Different content (one
+says "this is yours," the other is a general team FYI), so both are kept
+rather than suppressing one.
+
+**Distinct from `slaEscalation.js`, not a replacement for it**: SLA
+escalation is a periodic scan that flags a specific ticket once it
+crosses its response-time target; this broadcast is real-time and fires
+on every event regardless of timing. They're complementary, not
+coordinated — an ignored ticket can trigger both a real-time broadcast
+(on the original requester reply) and, later, a separate SLA-breach
+email, with no cross-referencing between the two. Worth knowing they're
+two independent systems rather than one replacing the other.
+
 ## Asset tracking
 
 Staff-only per-client hardware inventory (`GET/POST /api/assets`,

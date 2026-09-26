@@ -41,9 +41,13 @@ async function getAppToken() {
 
 // Sends mail as `from`, which must be a real mailbox (user or shared
 // mailbox) -- a plain distribution list has no message store and app-only
-// sendMail will fail against one.
+// sendMail will fail against one. `to` is normally a single address, but
+// also accepts an array -- one message with everyone in the To line (e.g.
+// broadcasting an event to the whole staff team), not one send per
+// recipient.
 async function sendMail({ from, to, subject, html }) {
   const token = await getAppToken();
+  const recipients = (Array.isArray(to) ? to : [to]).map((address) => ({ emailAddress: { address } }));
   const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(from)}/sendMail`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -51,7 +55,7 @@ async function sendMail({ from, to, subject, html }) {
       message: {
         subject,
         body: { contentType: 'HTML', content: html },
-        toRecipients: [{ emailAddress: { address: to } }],
+        toRecipients: recipients,
       },
       saveToSentItems: true,
     }),

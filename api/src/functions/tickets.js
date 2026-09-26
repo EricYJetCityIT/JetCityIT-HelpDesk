@@ -7,6 +7,7 @@ const { escapeHtml } = require('../lib/html');
 const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAccess');
 const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { resolveLinkedSheets, parseLinkedSheets, SmartsheetError } = require('../lib/smartsheet');
+const { notifyStaffTeam } = require('../lib/staffBroadcast');
 const { findAssetById } = require('../lib/assetsTable');
 const { odataEscape } = require('../lib/odata');
 const { emailDomain } = require('../lib/domain');
@@ -413,6 +414,24 @@ ${bodyHtml}${sheetsHtml}
         } catch (e) {
           context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
         }
+      }
+
+      // Only when the CURRENTLY assigned tech is the one replying -- not
+      // just any staff member -- so this specifically answers "did the
+      // person this ticket is assigned to actually respond," not "did
+      // someone reply." meta.assignee/user.upn are both already
+      // lowercased at the source (see ticketUpdate's assignee validation
+      // and requireStaff respectively), but compared defensively here
+      // anyway rather than assumed.
+      if (meta.assignee && user.upn.toLowerCase() === meta.assignee.toLowerCase()) {
+        await notifyStaffTeam(context, {
+          subject: `Assignee replied: ${meta.subject} [${ticketId}]`,
+          html: `<p><strong>${escapeHtml(user.name || user.upn)}</strong> (the assigned tech) replied on ticket ${escapeHtml(ticketId)}:</p>
+${text ? `<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>` : '<p><em>(no message text — sent a linked sheet)</em></p>'}
+<p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`,
+          // No point telling someone they just did the thing they just did.
+          excludeUpn: user.upn,
+        });
       }
 
       // linkedSheets echoes back exactly what was resolved/stored -- the

@@ -6,6 +6,7 @@ const { escapeHtml } = require('./html');
 const { getOrCreateClientToken, buildTrackingLink } = require('./clientAccess');
 const { storeAttachments, deleteAttachments, AttachmentError } = require('./attachments');
 const { STAFF_UPNS } = require('./auth');
+const { notifyStaffTeam } = require('./staffBroadcast');
 
 // Shared by the public ticket-submission form (ticketsPublic.js) and any
 // other server-side flow that needs to create a real ticket on someone's
@@ -143,6 +144,25 @@ async function createTicket({ name, email, company, subject, description, catego
   }
 
   audit(context, null, 'ticket.create', { ticketId, ...auditExtra });
+
+  // This can be reached from a PUBLIC, unauthenticated caller -- same
+  // concern as the per-assignee notification below, and the same fix: a
+  // flood that stays under the public form's 5/min-per-IP submit limit
+  // (distributed, or just slow-and-steady) could otherwise ride every new
+  // ticket straight into every staff member's inbox at once, uncapped. One
+  // shared bucket (not per-assignee) since this is a single team-wide
+  // broadcast, not a per-person one.
+  const broadcastLimit = checkRateLimit('staff-broadcast:new-ticket', 30, 60 * 60 * 1000);
+  if (broadcastLimit.allowed) {
+    await notifyStaffTeam(context, {
+      subject: `New ticket: ${subject} [${ticketId}]`,
+      html: `<p>New ticket from ${escapeHtml(name)} (${escapeHtml(email)}${company ? ', ' + escapeHtml(company) : ''}):</p>
+<p><strong>${escapeHtml(subject)}</strong></p>
+<p>${escapeHtml(description).replace(/\n/g, '<br/>')}</p>
+<p>${escapeHtml(validCategory)} · ${escapeHtml(validPriority)} priority${assignee ? ' · assigned to ' + escapeHtml(assignee) : ' · unassigned'}</p>
+<p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`,
+    });
+  }
 
   if (assignee) {
     await recordActivity(table, ticketId, `Auto-assigned to ${assignee}`);

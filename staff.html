@@ -162,7 +162,14 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .domain-item .count{font-size:11px;color:var(--text3);font-variant-numeric:tabular-nums}
 .domain-item.active .count{color:rgba(255,255,255,.7)}
 .console-main{flex:1;min-width:0}
-@media(max-width:760px){.console-layout{flex-direction:column}.domain-sidebar{width:100%;position:static}}
+/* .console-main's width:100% here is load-bearing, not decorative: once
+   .console-layout switches to flex-direction:column, its align-items:
+   flex-start means each column item sizes to its own content on the
+   NOW-cross axis (width) instead of stretching to the container -- so
+   without this, a wide child (the ticket table) silently drags
+   .console-main, and with it the whole page, wider than the viewport,
+   completely defeating .table-scroll's own overflow-x:auto below it. */
+@media(max-width:760px){.console-layout{flex-direction:column}.domain-sidebar{width:100%;position:static}.console-main{width:100%}}
 .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px}
 .filters{display:flex;gap:6px}
 .filter-btn{padding:7px 14px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:13px;font-weight:600;color:var(--text2)}

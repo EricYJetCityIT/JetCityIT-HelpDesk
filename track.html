@@ -109,12 +109,18 @@ body{
 }
 a{color:var(--green-dark)}
 button{font:inherit;cursor:pointer}
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
+/* flex-wrap is what actually fixes mobile: once the nav-links row no
+   longer fits next to the logo/title, it wraps to its own line below
+   rather than forcing the whole header (and the whole page) wider than
+   the viewport. min-height (not a fixed height) lets the bar grow to fit
+   that second line instead of clipping it. */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);min-height:58px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;padding:10px 24px;box-shadow:var(--shadow-sm)}
 .hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
 .hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-logo img{width:100%;height:100%;object-fit:contain}
-.hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px}
-.hdr-right a{font-size:13px;color:var(--text3);text-decoration:none}
+.hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px;white-space:nowrap}
+.hdr-right{flex-wrap:wrap}
+.hdr-right a{font-size:13px;color:var(--text3);text-decoration:none;white-space:nowrap}
 .hdr-right a:hover{color:var(--text2)}
 .hdr-pill-link{font-weight:600;color:var(--text2)!important;border:1px solid var(--border);border-radius:20px;padding:5px 14px!important}
 .hdr-pill-link:hover{background:var(--bg);color:var(--text)!important}
@@ -212,6 +218,11 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .theme-option:hover{background:var(--bg)}
 .theme-option.active{color:var(--text);font-weight:600}
 .theme-option.active::after{content:'✓';margin-left:auto}
+
+@media(max-width:600px){
+  .hdr{padding:10px 14px}
+  .wrap{padding-left:14px;padding-right:14px}
+}
 </style>
 </head>
 <body>

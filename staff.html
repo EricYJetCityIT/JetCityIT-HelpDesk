@@ -110,15 +110,29 @@ body::before{
   filter:blur(10px);
 }
 button{font:inherit;cursor:pointer}
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--shadow-sm)}
-.hdr-left{display:flex;align-items:center;gap:16px}
+/* flex-wrap here is what actually fixes mobile: once .hdr-right's row of
+   nav buttons no longer fits next to the logo/title, it wraps to its own
+   line below rather than forcing the whole header (and with it, the
+   whole page) wider than the viewport. min-height (not a fixed height)
+   lets the bar grow to fit that second line instead of clipping it. */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);min-height:58px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;padding:10px 24px;box-shadow:var(--shadow-sm)}
+.hdr-left{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
 .hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-logo img{width:100%;height:100%;object-fit:contain}
-.hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px}
-.hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px}
-.hdr-right{display:flex;align-items:center;gap:12px}
-.user-badge{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px}
+.hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px;white-space:nowrap}
+.hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px;white-space:nowrap}
+.hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.user-badge{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px;white-space:nowrap}
+@media(max-width:600px){
+  .hdr{padding:10px 14px}
+  .hdr-name{font-size:14px}
+  /* These 5 view containers set their own left/right padding inline
+     (24px), which otherwise eats nearly a quarter of a phone's width on
+     both sides combined -- !important is the only way to override an
+     inline style from here without touching every inline attribute. */
+  #console-view,#detail-view,#recurring-view,#assets-view,#analytics-view{padding-left:14px!important;padding-right:14px!important}
+}
 
 /* ── Sign-in overlay ── */
 #ms-login-overlay{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px}
@@ -158,6 +172,10 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .recurring-nav-btn:hover{background:var(--bg)}
 
 .table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
+/* Lets a too-wide table scroll horizontally within its own card on a
+   narrow screen, instead of the table-card's own overflow:hidden just
+   silently clipping the trailing columns/action buttons. */
+.table-scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:14px}
 thead th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);padding:12px 16px;border-bottom:1px solid var(--border)}
 tbody tr{border-bottom:1px solid var(--border);cursor:pointer}
@@ -502,6 +520,7 @@ a.sheet-chip:hover{background:var(--border)}
           <button type="button" id="bulk-clear-btn" class="bulk-clear-btn">Clear selection</button>
         </div>
         <div class="table-card">
+          <div class="table-scroll">
           <table>
             <thead>
               <tr><th class="check-col"><input type="checkbox" id="select-all-checkbox" aria-label="Select all"/></th><th>Subject</th><th>Requester</th><th>Assignee</th><th>Status</th><th>Priority</th><th>Updated</th></tr>
@@ -510,6 +529,7 @@ a.sheet-chip:hover{background:var(--border)}
               <tr class="empty-row"><td colspan="7">Loading…</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>
@@ -627,12 +647,14 @@ a.sheet-chip:hover{background:var(--border)}
     <div class="detail-card">
       <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:14px">Recurring tickets</h1>
       <div class="table-card" style="margin-bottom:24px">
+        <div class="table-scroll">
         <table>
           <thead>
             <tr><th>Subject</th><th>Category</th><th>Priority</th><th>Assignee</th><th>Every</th><th>Last created</th><th>Status</th><th></th></tr>
           </thead>
           <tbody id="recurring-tbody"><tr class="empty-row"><td colspan="8">Loading…</td></tr></tbody>
         </table>
+        </div>
       </div>
 
       <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">New recurring ticket</h2>
@@ -686,12 +708,14 @@ a.sheet-chip:hover{background:var(--border)}
         </div>
       </div>
       <div class="table-card" style="margin-bottom:24px">
+        <div class="table-scroll">
         <table>
           <thead>
             <tr><th>Label</th><th>Type</th><th>Client</th><th>Status</th><th>Warranty</th><th>Assigned to</th><th></th></tr>
           </thead>
           <tbody id="assets-tbody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
         </table>
+        </div>
       </div>
 
       <h2 style="font-size:14px;font-weight:700;margin-bottom:12px" id="asset-form-title">Add an asset</h2>

@@ -54,8 +54,10 @@ own list and merges the two at sign-in, same model as the crew site's Access tab
   `/api/access*` route). Someone added from the page can use the console but can
   **never** add or remove anyone, so access can't be passed along from a
   granted account. Optional `ACCESS_ADMIN_UPNS` (comma-separated) narrows it
-  further to the people listed (who must also be in `STAFF_UPNS`); unset means
-  every Azure staff member, matching how the crew site behaves.
+  further to the people listed (who must also be in `STAFF_UPNS`); unset or
+  blank means every Azure staff member, matching how the crew site behaves.
+  **A value that is set but unusable (just `,`, or a typo'd list) means nobody
+  can manage access**, never everybody: it fails closed, and the fix is in Azure.
 - **What may be added.** Only `@jetcityit.com` addresses, and only a person
   who **exists and is enabled in the company directory right now** (Graph
   `GET /users/{upn}`, the already-consented `User.Read.All`): granting an
@@ -63,18 +65,45 @@ own list and merges the two at sign-in, same model as the crew site's Access tab
   The directory's canonical sign-in name, not what was typed, is what's stored
   and later matched against the token's `preferred_username`. If the directory
   can't be reached the add is refused (503), never allowed unchecked.
+- **A grant belongs to an account, not an address.** The row also stores the
+  account's Entra object id (`oid`), and `requireStaff` denies a page-added
+  person whose token carries a *different* `oid` (the person left and the
+  address was later reissued, or a rename freed it, so the new holder would
+  otherwise inherit console access). A token with no `oid` claim can't be
+  checked and is let through; every normal user token has one, so this only
+  ever denies a proven mismatch. The Azure `STAFF_UPNS` list is address-only,
+  as it always was.
 - **Freshness.** The page-added list is cached per server instance for 30 s
   (shared in-flight read, 2.5 s timeout, last good copy kept up to 10 minutes if
-  reads fail), so a change reaches every instance within ~30 s. If the list
-  can't be read and nothing is cached, someone who isn't in Azure's list gets a
-  503 "try again" rather than a 403 that would tell a genuinely-added person
-  they have no access; Azure-listed people never depend on that read.
+  reads fail), so a change reaches every instance within ~30 s. After an add or
+  remove, the instance that handled it re-reads the list; if that re-read fails
+  the change is applied to the copy it already had (and that copy is marked due
+  for a re-read), and overlapping changes can't overwrite each other with an
+  older snapshot. If the list can't be read and nothing is cached, someone who
+  isn't in Azure's list gets a 503 "try again" (and a plain 503 on `/api/*`
+  instead of the usual 403) rather than a 403 that would tell a genuinely-added
+  person they have no access; Azure-listed people never depend on that read.
 - **Audit.** `access.add` / `access.remove` (actor + target UPN only) are
-  logged, and only when something really changed. Each added person also shows
-  who added them and when on the tab.
+  logged, and only when something really changed; an admin-only route reached
+  by someone who isn't an admin logs `access.denied`. Each added person also
+  shows who added them and when on the tab.
+- **Removing.** A page-added row can always be removed, even if the person was
+  later also added in Azure (so dropping them from Azure afterwards really does
+  revoke); an Azure-only person can only be changed in Azure. Removing someone
+  doesn't unassign tickets already assigned to them: the ticket's assignee
+  dropdown keeps showing them ("no longer on the staff list") so a save doesn't
+  silently clear it, and the assignee is only re-validated when it actually
+  *changes* (an unrelated status edit on a ticket assigned to a removed person
+  still saves).
+- **Picker.** The "Name or email" box only acts on an unambiguous answer: an
+  address (typed, or the `Name <email>` a list choice fills in), or a name that
+  matches exactly one person in full. A partial name suggests the likely match
+  instead of adding anyone.
 - **Not covered:** the page can't reach Azure itself, so it can't remove an
-  Azure-listed person, and it adds nobody to the Azure setting. Removing an
-  added person doesn't unassign tickets already assigned to them.
+  Azure-listed person, and it adds nobody to the Azure setting. Reminder and
+  escalation emails (`slaEscalation.js`) still go to a ticket's stored
+  assignee, so a removed person keeps getting those for tickets still assigned
+  to them until someone reassigns.
 
 ## Sign-in
 
@@ -541,8 +570,11 @@ pictures too -- see "Email-in replies" below.
 ## Assigning tickets to staff
 
 The staff console's assignee field is a dropdown (`GET /api/staff`,
-staff-only) populated from `STAFF_UPNS`, with display names resolved via
-Microsoft Graph (`getUsersByUpns` in `api/src/lib/graph.js`) using the same
+staff-only) populated from the whole staff team (`STAFF_UPNS` plus anyone added
+on the Access tab, see "Who is staff?" above), with display names for the
+Azure-listed people resolved via
+Microsoft Graph (`getUsersByUpns` in `api/src/lib/graph.js`; people added on
+the Access tab carry the name they were added with) using the same
 app-only client-credentials flow as `sendMail`. This reuses an
 already-admin-consented application permission (`User.Read.All`, granted on
 the shared App Registration previously for the crew-calendar app) — no new
@@ -551,7 +583,8 @@ Function instance; if the Graph lookup fails for any reason, the dropdown
 still works and just shows raw email addresses instead of names.
 
 `PATCH /api/tickets/{id}` validates `assignee` server-side against
-`STAFF_UPNS` (rejecting anything else with 400) — the dropdown only ever
+the staff team (rejecting anything else with 400, but only when the assignee is
+actually changing) — the dropdown only ever
 offers valid entries, but the assignee value doubles as an email address at
 notification time, so it's re-validated rather than trusted. When the
 assignee actually changes to a different, non-blank person, that person
@@ -1036,7 +1069,7 @@ to go looking for it separately.
 
 ## Staff team broadcast
 
-Every staff member (every entry in `STAFF_UPNS`) gets emailed on three
+Every staff member (every entry in `STAFF_UPNS` plus anyone added on the Access tab) gets emailed on three
 events, so anyone can notice ticket activity — especially a client
 follow-up sitting unanswered — without actively watching a specific
 ticket or relying on whoever's assigned to flag it themselves:
@@ -1050,7 +1083,7 @@ ticket or relying on whoever's assigned to flag it themselves:
    than just "did someone reply."
 
 **Implementation**: `api/src/lib/staffBroadcast.js`'s `notifyStaffTeam(context, {subject, html})`
-sends ONE message with every `STAFF_UPNS` address in the To line (not a
+sends ONE message with every staff address (`getStaffUpns()`) in the To line (not a
 separate send per person) via the same app-only `sendMail()` used
 everywhere else — `graph.js`'s `sendMail` was extended to accept `to` as
 either a single address or an array for this. Self-swallowing: a failure
@@ -1203,10 +1236,15 @@ no concept of updating an existing one by id, even if the file includes an
 - **Public**: submit a ticket with no auth → 201 with a `ticketId`. Submit
   with the hidden `website` field filled in → fake 201, nothing written.
   Hammer the endpoint > 5x/min from one IP → 429.
-- **As staff** (in `STAFF_UPNS`): list tickets, open one, change status/priority/
-  assignee, reply → all succeed.
+- **As staff** (in `STAFF_UPNS`, or added on the Access tab): list tickets, open
+  one, change status/priority/assignee, reply → all succeed.
 - **As a signed-in but non-staff `@jetcityit.com` account**: `/api/me` returns
-  `{isStaff:false}`; any `/api/tickets*` call → 403.
+  `{isStaff:false}`; any `/api/tickets*` call → 403 (or 503 "try again" if the
+  Access tab's list couldn't be read at that moment).
+- **Access tab**: as an Azure-listed staff member, add a person → they can sign
+  in on their next page load and appear in the assignee dropdown; remove them →
+  they lose access within ~30 s. As someone added from the page, the tab and
+  every `/api/access*` call are refused (403).
 - **Email**: reply to a real ticket → requester gets an email from
   `helpdesk@jetcityit.com` with the reply text. Reply still succeeds (200)
   even if `MAIL_CLIENT_SECRET` is missing/wrong — check the Function's logs

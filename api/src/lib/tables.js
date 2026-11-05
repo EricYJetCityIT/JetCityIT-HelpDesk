@@ -28,7 +28,13 @@ async function ensureTable() {
     ensured = getClient()
       .createTable()
       .catch((e) => {
-        if (e.statusCode !== 409) throw e;
+        if (e.statusCode !== 409) {
+          // A failure is not cached: otherwise one transient error here (a cold-start blip) would
+          // be replayed for every later call on this instance until it recycles -- which now also
+          // means every page-added staff member getting "access list unavailable".
+          ensured = null;
+          throw e;
+        }
       });
   }
   return ensured;

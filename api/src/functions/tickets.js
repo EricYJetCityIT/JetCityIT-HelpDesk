@@ -201,8 +201,12 @@ app.http('ticketUpdate', {
         // The dropdown only ever offers staff (the Azure list plus anyone added
         // on the Access tab), or blank for unassigned -- this rejects anything
         // else rather than silently storing it, since assignee is also used as
-        // an email address below.
-        if (assignee && !(await getStaffUpns()).includes(assignee)) throw new AuthError(400, 'Invalid assignee');
+        // an email address below. Only checked when the assignee is actually
+        // CHANGING: the console's "Save changes" always re-sends the current
+        // assignee, so re-validating an unchanged one would fail an unrelated
+        // status/priority edit on any ticket whose assignee has since been
+        // removed from the staff list.
+        if (assignee && assignee !== previousAssignee && !(await getStaffUpns()).includes(assignee)) throw new AuthError(400, 'Invalid assignee');
         update.assignee = assignee;
       }
       // assetId is validated against the separate Assets table (not this

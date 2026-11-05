@@ -131,7 +131,7 @@ button{font:inherit;cursor:pointer}
      (24px), which otherwise eats nearly a quarter of a phone's width on
      both sides combined -- !important is the only way to override an
      inline style from here without touching every inline attribute. */
-  #console-view,#detail-view,#recurring-view,#assets-view,#analytics-view{padding-left:14px!important;padding-right:14px!important}
+  #console-view,#detail-view,#recurring-view,#assets-view,#analytics-view,#access-view{padding-left:14px!important;padding-right:14px!important}
 }
 
 /* ── Sign-in overlay ── */
@@ -477,7 +477,7 @@ a.sheet-chip:hover{background:var(--border)}
 
 <div id="denied-view">
   <h1>You don't have access to the Help Desk console</h1>
-  <p>Your account isn't on the staff list. Ask an existing admin to add you from the console's Access tab (or to add your email to <code>STAFF_UPNS</code> in Azure).</p>
+  <p>Your account isn't on the staff list. Ask an existing admin to add you from the console's Access tab (or to add your email to <code>STAFF_UPNS</code> in Azure). If you were only just added, wait a minute and reload this page.</p>
 </div>
 
 <div id="app-shell" style="display:none">
@@ -1121,6 +1121,22 @@ async function loadStaffOptions(){
   document.getElementById('bulk-assignee').innerHTML =
     '<option value="">Change assignee…</option><option value="__unassigned__">Unassigned</option>' + optionsHtml;
   document.getElementById('rt-assignee').innerHTML = '<option value="">Unassigned</option>' + optionsHtml;
+}
+
+// Shows a ticket's assignee in the detail dropdown. If that person is no longer
+// on the staff list (removed on the Access tab, or the list couldn't be read
+// for a moment) the dropdown has no option for them, and setting .value to an
+// unknown value silently falls back to "Unassigned" -- after which "Save
+// changes" would clear the real assignee. So they get an option of their own.
+function setAssigneeSelect(upn){
+  const sel = document.getElementById('d-assignee');
+  if (upn && !Array.prototype.some.call(sel.options, function(o){ return o.value === upn; })) {
+    const opt = document.createElement('option');
+    opt.value = upn;
+    opt.textContent = upn + ' (no longer on the staff list)';
+    sel.appendChild(opt);
+  }
+  sel.value = upn;
 }
 
 async function afterSignIn(){
@@ -1984,7 +2000,7 @@ async function openTicket(id){
     document.getElementById('d-status').value = t.status;
     document.getElementById('d-priority').value = t.priority;
     document.getElementById('d-category').value = t.category || 'Other';
-    document.getElementById('d-assignee').value = t.assignee || '';
+    setAssigneeSelect(t.assignee || '');
     populateAssetSelect(emailDomain(t.email));
     document.getElementById('d-asset').value = t.assetId || '';
     document.getElementById('delete-ticket-btn').disabled = false;
@@ -2631,7 +2647,7 @@ function accessRowHtml(p, isAzure){
     : '';
   const side = isAzure
     ? '<span class="acc-lock" title="Set in Azure settings; can only be changed there">🔒 Azure</span>'
-    : '<button type="button" class="recurring-nav-btn acc-remove" data-upn="' + escapeHtml(p.upn) + '">Remove</button>';
+    : '<button type="button" class="recurring-nav-btn acc-remove" data-upn="' + escapeHtml(p.upn) + '" aria-label="Remove ' + escapeHtml(name) + '">Remove</button>';
   return '<div class="acc-row"><div class="acc-who"><div class="acc-name">' + escapeHtml(name) + '</div>' + email + by + '</div>' +
     '<div class="acc-side">' + side + '</div></div>';
 }
@@ -2647,8 +2663,10 @@ async function loadAccessDirectory(){
     const data = await apiFetch('/access-directory');
     accessDirectory = data.users || [];
     accessDirectoryLoaded = accessDirectory.length > 0;
+    // The option's value carries the address too ("Name <email>"): choosing one fills the box with
+    // exactly who it is, and two people who share a display name can still be told apart.
     document.getElementById('access-dir').innerHTML = accessDirectory.map(function(u){
-      return '<option value="' + escapeHtml(u.name || u.upn) + '" label="' + escapeHtml(u.upn) + '"></option>';
+      return '<option value="' + escapeHtml(u.name ? u.name + ' <' + u.upn + '>' : u.upn) + '"></option>';
     }).join('');
   } catch (e) {
     // The picker is a convenience; typing a full @jetcityit.com address still works without it.
@@ -2668,18 +2686,24 @@ async function loadAccess(){
   if (!accessDirectoryLoaded) loadAccessDirectory();
 }
 
-// "Name or email" -> a sign-in address. Anything with an @ is taken as the address (the server checks it
-// is a real, enabled @jetcityit.com account); a name must match exactly one person in the directory.
+// "Name or email" -> a sign-in address. Granting staff access is not something to guess at, so this only
+// ever acts on an unambiguous answer: an address (typed, or the "Name <email>" a list choice fills in --
+// the server then checks it is a real, enabled @jetcityit.com account), or a name that matches exactly
+// one person in full. A partial name is never acted on; it offers the likely match instead.
 function resolveAccessInput(text){
   const t = String(text || '').trim();
   if (!t) return { error: 'Type a name or an @jetcityit.com email address.' };
+  const bracketed = t.match(/<([^<>\s]+@[^<>\s]+)>\s*$/);
+  if (bracketed) return { upn: bracketed[1].toLowerCase() };
   if (t.indexOf('@') !== -1) return { upn: t.toLowerCase() };
   const lc = t.toLowerCase();
-  let hits = accessDirectory.filter(function(u){ return (u.name || '').toLowerCase() === lc; });
-  if (!hits.length) hits = accessDirectory.filter(function(u){ return (u.name || '').toLowerCase().indexOf(lc) !== -1; });
-  if (hits.length === 1) return { upn: hits[0].upn };
-  if (!hits.length) return { error: 'No one in the company directory matches "' + t + '". Try their full @jetcityit.com email address.' };
-  return { error: 'More than one person matches "' + t + '". Pick one from the list, or type their email address.' };
+  const exact = accessDirectory.filter(function(u){ return (u.name || '').toLowerCase() === lc; });
+  if (exact.length === 1) return { upn: exact[0].upn };
+  if (exact.length > 1) return { error: 'More than one person is named "' + t + '". Pick the right one from the list, or type their email address.' };
+  const partial = accessDirectory.filter(function(u){ return (u.name || '').toLowerCase().indexOf(lc) !== -1; });
+  if (partial.length === 1) return { error: 'Did you mean ' + partial[0].name + ' (' + partial[0].upn + ')? Pick them from the list, or type their full name or email address.' };
+  if (partial.length > 1) return { error: 'More than one person matches "' + t + '". Pick one from the list, or type their email address.' };
+  return { error: 'No one in the company directory matches "' + t + '". Try their full @jetcityit.com email address.' };
 }
 
 document.getElementById('access-form').addEventListener('submit', async function(e){
@@ -2692,7 +2716,8 @@ document.getElementById('access-form').addEventListener('submit', async function
   accessMsg('', '');
   try {
     const data = await apiFetch('/access', { method: 'POST', body: JSON.stringify({ upn: r.upn }) });
-    renderAccess(data);
+    // The change is saved; if the server couldn't build the fresh lists for the reply, reload them.
+    if (data.page) renderAccess(data); else await loadAccess();
     input.value = '';
     accessMsg('ok', data.added
       ? r.upn + ' now has access. They get it the next time they open or reload the console.'
@@ -2713,7 +2738,8 @@ document.getElementById('access-list').addEventListener('click', async function(
   btn.disabled = true;
   accessMsg('', '');
   try {
-    renderAccess(await apiFetch('/access/' + encodeURIComponent(upn), { method: 'DELETE' }));
+    const data = await apiFetch('/access/' + encodeURIComponent(upn), { method: 'DELETE' });
+    if (data.page) renderAccess(data); else await loadAccess();
     accessMsg('ok', upn + ' no longer has access.');
     loadStaffOptions();
   } catch (err) {

@@ -23,11 +23,11 @@ const REQUIRED_SCOPE = 'access_as_user';
 // crew-calendar app's EDITOR_UPNS: a comma-separated app setting, no
 // app-registration change needed to add/remove staff.
 //
-// STAFF_UPNS here is the Azure-setting list ONLY (read-only from the site).
-// The allowlist actually enforced is that PLUS the people an access admin
-// added from the console's Access tab -- see lib/staffAccess.js, and use its
-// getStaffUpns() anywhere that needs "the whole staff team".
-const { AZURE_STAFF_UPNS: STAFF_UPNS, ACCESS_ADMIN_UPNS, getPageStaff } = require('./staffAccess');
+// AZURE_STAFF_UPNS here is the Azure-setting list ONLY (read-only from the
+// site). The allowlist actually enforced is that PLUS the people an access
+// admin added from the console's Access tab -- see lib/staffAccess.js, and use
+// its getStaffUpns() anywhere that needs "the whole staff team".
+const { AZURE_STAFF_UPNS, ACCESS_ADMIN_UPNS, ACCESS_ADMINS_RESTRICTED, getPageStaff } = require('./staffAccess');
 
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
@@ -105,11 +105,20 @@ async function requireStaff(request) {
   // Staff = the Azure list OR added on the Access tab. Azure people never need the page list read at
   // all. For anyone else the page list decides, and if it can't be read (and nothing is cached) the
   // honest answer is 503 "try again", not a 403 that would tell a genuinely-added person they have no access.
-  const azureStaff = STAFF_UPNS.includes(upn);
+  const azureStaff = AZURE_STAFF_UPNS.includes(upn);
   if (!azureStaff) {
     const { people, unavailable } = await getPageStaff();
-    if (!people.some((p) => p.upn === upn)) {
+    const grant = people.find((p) => p.upn === upn);
+    if (!grant) {
       if (unavailable) throw new AuthError(503, 'Access list is temporarily unavailable. Please try again in a moment.');
+      throw new AuthError(403, 'Account not permitted');
+    }
+    // The grant was made to ONE account (its Entra object id), not to an address. If this address now
+    // belongs to someone else -- the person left and the address was reissued, or a rename freed it --
+    // they must not inherit the access. A token without an oid claim can't be checked and is let
+    // through (every normal user token carries one), so this only ever denies a proven mismatch.
+    const tokenOid = String(decoded.oid || '').trim().toLowerCase();
+    if (grant.oid && tokenOid && grant.oid !== tokenOid) {
       throw new AuthError(403, 'Account not permitted');
     }
   }
@@ -120,8 +129,9 @@ async function requireStaff(request) {
   }
 
   // Only people who are staff through AZURE may manage access, so someone added from the page can never
-  // hand out access themselves. If ACCESS_ADMIN_UPNS is set it narrows that to the people listed there.
-  const isAccessAdmin = azureStaff && (ACCESS_ADMIN_UPNS.length === 0 || ACCESS_ADMIN_UPNS.includes(upn));
+  // hand out access themselves. If ACCESS_ADMIN_UPNS is set it narrows that to the people listed there --
+  // and a set-but-unusable value (e.g. just ",") means NOBODY, never "everyone".
+  const isAccessAdmin = azureStaff && (!ACCESS_ADMINS_RESTRICTED || ACCESS_ADMIN_UPNS.includes(upn));
   return { name: decoded.name || upn, upn, isAccessAdmin };
 }
 
@@ -181,4 +191,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireStaff, requireAccessAdmin, requireCronSecret, AuthError, authErrorResponse, STAFF_UPNS };
+module.exports = { requireStaff, requireAccessAdmin, requireCronSecret, AuthError, authErrorResponse, AZURE_STAFF_UPNS };

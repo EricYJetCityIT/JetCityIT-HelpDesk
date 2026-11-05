@@ -81,7 +81,7 @@ async function getUsersByUpns(upns) {
       try {
         const res = await fetch(
           `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=displayName`,
-          { headers: { Authorization: `Bearer ${token}` } }
+          { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) }
         );
         if (!res.ok) return { upn, name: null };
         const data = await res.json();
@@ -99,11 +99,13 @@ async function getUsersByUpns(upns) {
 // ask right now" (try again). Looked up by the exact sign-in name -- the same
 // value the staff sign-in check matches (the token's preferred_username).
 // `upn` in the result is Graph's own canonical, lowercased userPrincipalName,
-// which is what gets stored, rather than whatever was typed.
+// which is what gets stored, rather than whatever was typed. `oid` is the
+// account's Entra object id: the grant is bound to it, so a reissued address
+// can't inherit someone else's access (see lib/staffAccess.js).
 async function getUserByUpn(upn) {
   const token = await getAppToken();
   const res = await fetch(
-    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=displayName,userPrincipalName,accountEnabled`,
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=id,displayName,userPrincipalName,accountEnabled`,
     { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) }
   );
   if (res.status === 404) return null;
@@ -114,6 +116,7 @@ async function getUserByUpn(upn) {
   const data = await res.json();
   return {
     upn: String(data.userPrincipalName || '').trim().toLowerCase(),
+    oid: String(data.id || '').trim().toLowerCase(),
     name: data.displayName || null,
     enabled: data.accountEnabled !== false,
   };
@@ -142,6 +145,7 @@ async function listDirectoryUsers() {
     });
     url = data['@odata.nextLink'] || null;
   }
+  if (url) console.warn('GRAPH_DIRECTORY_TRUNCATED the company directory has more than 10 pages; the picker lists only the first ones');
   return out;
 }
 

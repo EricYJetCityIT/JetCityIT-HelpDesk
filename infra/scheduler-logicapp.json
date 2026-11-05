@@ -1,0 +1,114 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Calls the Help Desk's four background jobs (email replies, SLA escalation, recurring tickets, auto-close) every few minutes. GitHub's own cron ran them only every few hours; this is the reliable replacement. See infra/README.md."
+  },
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "defaultValue": "jetcityit-helpdesk-scheduler",
+      "metadata": { "description": "Name of the Logic App to create." }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Azure region. Defaults to the resource group's." }
+    },
+    "siteUrl": {
+      "type": "string",
+      "defaultValue": "https://helpdesk.jetcityit.com",
+      "metadata": { "description": "The Help Desk's address, with no trailing slash." }
+    },
+    "intervalMinutes": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 1,
+      "maxValue": 60,
+      "metadata": { "description": "How often the jobs are called. 5 is what the code expects; going lower costs more for no benefit." }
+    },
+    "cronSecret": {
+      "type": "securestring",
+      "metadata": { "description": "The SAME value as the INTERNAL_CRON_SECRET setting on the jetcityit-helpdesk Static Web App (Environment variables). Stored as a secure parameter: it is not shown in the portal, the deployment history or the run history." }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "siteUrl": { "type": "string", "defaultValue": "" },
+            "cronSecret": { "type": "securestring" }
+          },
+          "triggers": {
+            "Every_few_minutes": {
+              "type": "Recurrence",
+              "recurrence": {
+                "frequency": "Minute",
+                "interval": "[parameters('intervalMinutes')]"
+              }
+            }
+          },
+          "actions": {
+            "Email_replies": {
+              "type": "Http",
+              "runAfter": {},
+              "inputs": {
+                "method": "POST",
+                "uri": "@{concat(parameters('siteUrl'), '/api/internal/email-ingest-tick')}",
+                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
+                "retryPolicy": { "type": "none" }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+            },
+            "SLA_escalation": {
+              "type": "Http",
+              "runAfter": {},
+              "inputs": {
+                "method": "POST",
+                "uri": "@{concat(parameters('siteUrl'), '/api/internal/sla-escalation-tick')}",
+                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
+                "retryPolicy": { "type": "none" }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+            },
+            "Recurring_tickets": {
+              "type": "Http",
+              "runAfter": {},
+              "inputs": {
+                "method": "POST",
+                "uri": "@{concat(parameters('siteUrl'), '/api/internal/recurring-tickets-tick')}",
+                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
+                "retryPolicy": { "type": "none" }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+            },
+            "Auto_close": {
+              "type": "Http",
+              "runAfter": {},
+              "inputs": {
+                "method": "POST",
+                "uri": "@{concat(parameters('siteUrl'), '/api/internal/auto-close-tick')}",
+                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
+                "retryPolicy": { "type": "none" }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "siteUrl": { "value": "[parameters('siteUrl')]" },
+          "cronSecret": { "value": "[parameters('cronSecret')]" }
+        }
+      }
+    }
+  ]
+}

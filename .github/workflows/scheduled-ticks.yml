@@ -13,6 +13,14 @@ name: Help Desk scheduled background jobs
 # simpler than juggling separate schedules -- the daily recurring-ticket
 # job just no-ops on every tick where nothing is actually due yet.
 #
+# THIS IS NOW ONLY A BACKSTOP. GitHub does not honor a 5-minute cron: measured
+# over 12 days these runs came every ~5 hours (2 to 10), which left emailed
+# replies, SLA alerts and the rest hours late. The real trigger is an Azure
+# Logic App calling the same endpoints every 5 minutes (infra/README.md).
+# Keeping this as well is safe: every job takes a lease (api/src/lib/
+# tickLease.js), so two callers arriving together can't run a job twice. Its
+# manual "Run workflow" button is still the quick way to force one run.
+#
 # Requires a repo secret INTERNAL_CRON_SECRET, matching the app setting of
 # the same name on the jetcityit-helpdesk Static Web App -- this is what
 # stops a stranger from directly POSTing these endpoints and triggering

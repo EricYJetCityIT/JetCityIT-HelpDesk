@@ -7,6 +7,7 @@ const { deleteAttachments } = require('../lib/attachments');
 const { importEmailAttachments, describeNotImported, stripCidPlaceholders } = require('../lib/emailAttachments');
 const { normalizeEmail } = require('../lib/clientAccess');
 const { requireCronSecret, authErrorResponse } = require('../lib/auth');
+const { withTickLease } = require('../lib/tickLease');
 const { notifyStaffTeam } = require('../lib/staffBroadcast');
 
 // Reserved partitions, same pattern as CLIENT/CONFIG/RECURRING elsewhere in
@@ -55,9 +56,11 @@ const POLL_TIME_BUDGET_MS = 150 * 1000;
 // Checks the shared helpdesk@ mailbox's Inbox for new messages and threads
 // matching ones into the relevant ticket as a client reply -- lets a
 // client just hit "reply" on a notification email instead of going
-// through the tracking portal. Invoked every 5 minutes by a GitHub
-// Actions scheduled workflow (see .github/workflows/scheduled-ticks.yml)
-// rather than an Azure Timer Trigger -- Azure Static Web Apps' managed
+// through the tracking portal. Meant to be called every ~5 minutes by an
+// Azure Logic App (see infra/README.md), with the GitHub Actions workflow
+// (.github/workflows/scheduled-ticks.yml) only a slow backstop -- GitHub's
+// cron actually fires every few hours. Called on a schedule rather than run
+// as an Azure Timer Trigger -- Azure Static Web Apps' managed
 // Functions integration only supports HTTP triggers (see the comment on
 // requireCronSecret in lib/auth.js for the full story). Deliberately a
 // poll, not a Graph webhook subscription: no clientState-signature
@@ -74,82 +77,87 @@ app.http('emailIngestCheck', {
   handler: async (request, context) => {
     try {
       requireCronSecret(request);
-      await ensureTable();
-      const table = getClient();
+      // One run at a time per job, and a heartbeat the staff console shows (lib/tickLease.js).
+      const run = await withTickLease('email-ingest', context, async () => {
+        await ensureTable();
+        const table = getClient();
 
-      let cursor;
-      try {
-        const row = await table.getEntity(CONFIG_PARTITION, CURSOR_ROW);
-        cursor = row.since;
-      } catch (e) {
-        if (e.statusCode !== 404) throw e;
-      }
-      // First run ever (or a lost cursor) starts from a few minutes back,
-      // not the mailbox's entire history -- turning this feature on
-      // shouldn't suddenly ingest months of old inbox mail as replies.
-      if (!cursor) cursor = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-
-      const messages = await getInboxMessagesSince(cursor);
-      // The cursor only ever advances past a message once it's been
-      // durably handled (processed or deliberately skipped) -- NOT just
-      // because it was fetched. Comparing via getTime() rather than raw
-      // ISO strings, since the bootstrap fallback above (3 fractional
-      // digits) and Graph's own receivedDateTime (7 fractional digits)
-      // don't compare correctly as plain strings.
-      let safeCursor = cursor;
-      let processedCount = 0;
-      const deadline = Date.now() + POLL_TIME_BUDGET_MS;
-
-      for (const msg of messages) {
-        if (Date.now() > deadline) {
-          context.log('EMAIL_INGEST_TIME_BUDGET_REACHED ' + JSON.stringify({ processedCount, fetched: messages.length }));
-          break;
-        }
-        const key = dedupKey(msg.id);
-        let alreadyHandled = false;
+        let cursor;
         try {
-          await table.getEntity(DEDUP_PARTITION, key);
-          alreadyHandled = true;
+          const row = await table.getEntity(CONFIG_PARTITION, CURSOR_ROW);
+          cursor = row.since;
         } catch (e) {
-          if (e.statusCode !== 404) {
-            // Can't tell whether this was already handled -- stop rather
-            // than risk either skipping or duplicating it.
-            context.log('EMAIL_INGEST_DEDUP_CHECK_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+          if (e.statusCode !== 404) throw e;
+        }
+        // First run ever (or a lost cursor) starts from a few minutes back,
+        // not the mailbox's entire history -- turning this feature on
+        // shouldn't suddenly ingest months of old inbox mail as replies.
+        if (!cursor) cursor = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+        const messages = await getInboxMessagesSince(cursor);
+        // The cursor only ever advances past a message once it's been
+        // durably handled (processed or deliberately skipped) -- NOT just
+        // because it was fetched. Comparing via getTime() rather than raw
+        // ISO strings, since the bootstrap fallback above (3 fractional
+        // digits) and Graph's own receivedDateTime (7 fractional digits)
+        // don't compare correctly as plain strings.
+        let safeCursor = cursor;
+        let processedCount = 0;
+        const deadline = Date.now() + POLL_TIME_BUDGET_MS;
+
+        for (const msg of messages) {
+          if (Date.now() > deadline) {
+            context.log('EMAIL_INGEST_TIME_BUDGET_REACHED ' + JSON.stringify({ processedCount, fetched: messages.length }));
             break;
           }
-        }
-
-        if (!alreadyHandled) {
+          const key = dedupKey(msg.id);
+          let alreadyHandled = false;
           try {
-            await processInboundMessage(table, context, msg);
+            await table.getEntity(DEDUP_PARTITION, key);
+            alreadyHandled = true;
           } catch (e) {
-            // A genuine failure -- stop here. Everything from this message
-            // onward gets retried on the next poll, since the cursor never
-            // advances past it.
-            context.log('EMAIL_INGEST_MESSAGE_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
-            break;
+            if (e.statusCode !== 404) {
+              // Can't tell whether this was already handled -- stop rather
+              // than risk either skipping or duplicating it.
+              context.log('EMAIL_INGEST_DEDUP_CHECK_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+              break;
+            }
           }
-          try {
-            await table.createEntity({ partitionKey: DEDUP_PARTITION, rowKey: key, kind: 'config', processedAt: new Date().toISOString() });
-          } catch (e) {
-            // Best-effort -- if just this marker write fails, the worst
-            // case is this one message gets reprocessed (and its side
-            // effects duplicated) on a future retry. A far better trade
-            // than treating a failed marker write the same as a failed
-            // processing attempt and blocking the cursor here too.
-            context.log('EMAIL_INGEST_DEDUP_MARK_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+
+          if (!alreadyHandled) {
+            try {
+              await processInboundMessage(table, context, msg);
+            } catch (e) {
+              // A genuine failure -- stop here. Everything from this message
+              // onward gets retried on the next poll, since the cursor never
+              // advances past it.
+              context.log('EMAIL_INGEST_MESSAGE_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+              break;
+            }
+            try {
+              await table.createEntity({ partitionKey: DEDUP_PARTITION, rowKey: key, kind: 'config', processedAt: new Date().toISOString() });
+            } catch (e) {
+              // Best-effort -- if just this marker write fails, the worst
+              // case is this one message gets reprocessed (and its side
+              // effects duplicated) on a future retry. A far better trade
+              // than treating a failed marker write the same as a failed
+              // processing attempt and blocking the cursor here too.
+              context.log('EMAIL_INGEST_DEDUP_MARK_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+            }
+            processedCount++;
           }
-          processedCount++;
+
+          if (msg.receivedDateTime && new Date(msg.receivedDateTime).getTime() > new Date(safeCursor).getTime()) {
+            safeCursor = msg.receivedDateTime;
+          }
         }
 
-        if (msg.receivedDateTime && new Date(msg.receivedDateTime).getTime() > new Date(safeCursor).getTime()) {
-          safeCursor = msg.receivedDateTime;
-        }
-      }
-
-      await table.upsertEntity({ partitionKey: CONFIG_PARTITION, rowKey: CURSOR_ROW, kind: 'config', since: safeCursor }, 'Merge');
-      if (processedCount) context.log('EMAIL_INGEST_PROCESSED ' + JSON.stringify({ count: processedCount }));
-      return { jsonBody: { ok: true, processedCount } };
+        await table.upsertEntity({ partitionKey: CONFIG_PARTITION, rowKey: CURSOR_ROW, kind: 'config', since: safeCursor }, 'Merge');
+        if (processedCount) context.log('EMAIL_INGEST_PROCESSED ' + JSON.stringify({ count: processedCount }));
+        return { ok: true, processedCount };
+      });
+      if (run.skipped) return { jsonBody: { ok: true, skipped: true } };
+      return { jsonBody: run.result };
     } catch (e) {
       return authErrorResponse(e, context);
     }

@@ -123,6 +123,11 @@ button{font:inherit;cursor:pointer}
 .hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px;white-space:nowrap}
 .hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px;white-space:nowrap}
 .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+/* Background-jobs indicator: green = every job ran recently, amber = delayed/never ran, red = a job failed */
+.jobs-pill{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);color:var(--text2);font:inherit;font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px;white-space:nowrap;cursor:pointer}
+.jobs-pill::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.jobs-pill.warn::before{background:var(--amber)}
+.jobs-pill.bad::before{background:var(--red)}
 .user-badge{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px;white-space:nowrap}
 @media(max-width:600px){
   .hdr{padding:10px 14px}
@@ -497,6 +502,7 @@ a.sheet-chip:hover{background:var(--border)}
       <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Organization Portal</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <button class="recurring-nav-btn" id="access-nav-btn" type="button" style="display:none">🔑 Access</button>
+      <button type="button" class="jobs-pill" id="jobs-pill" style="display:none" aria-label="Background jobs status"></button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
         <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
@@ -1123,6 +1129,54 @@ async function loadStaffOptions(){
   document.getElementById('rt-assignee').innerHTML = '<option value="">Unassigned</option>' + optionsHtml;
 }
 
+// ── Background jobs indicator ──
+// The scheduled jobs (email replies, SLA escalation, recurring tickets, auto-close) are called from
+// outside this app and are meant to run every ~5 minutes. This shows when they last did, so a scheduler
+// that has quietly stopped, or is only firing every few hours, is visible instead of silent.
+const JOBS_STALE_MIN = 30;
+let jobsStatusTimer = null;
+function jobsAgeText(min){
+  if (min < 1) return 'just now';
+  if (min < 60) return min + ' min ago';
+  if (min < 1440) return Math.round(min / 60) + ' h ago';
+  return Math.round(min / 1440) + ' d ago';
+}
+async function loadJobsStatus(){
+  const pill = document.getElementById('jobs-pill');
+  try {
+    const data = await apiFetch('/jobs-status');
+    const now = Date.parse(data.now) || Date.now();
+    const lines = [];
+    const failing = [];
+    let worst = 0, never = false, unknown = false;
+    (data.jobs || []).forEach(function(j){
+      if (j.unknown) { unknown = true; lines.push(j.label + ': status unavailable'); return; }
+      const ran = Date.parse(j.lastFinishedAt || j.lastStartedAt || '');
+      if (!ran) { never = true; lines.push(j.label + ': has not run yet'); return; }
+      const age = Math.max(0, Math.round((now - ran) / 60000));
+      worst = Math.max(worst, age);
+      if (j.lastResult === 'error') failing.push(j.label);
+      lines.push(j.label + ': ' + jobsAgeText(age) + (j.lastResult === 'error' ? ' (failed: ' + (j.lastError || 'error') + ')' : ''));
+    });
+    let state = 'ok';
+    let text = 'Jobs OK · ' + jobsAgeText(worst);
+    if (failing.length) { state = 'bad'; text = 'Jobs failing · ' + failing.join(', '); }
+    else if (never) { state = 'warn'; text = 'Jobs · not run yet'; }
+    else if (worst > JOBS_STALE_MIN) { state = 'warn'; text = 'Jobs delayed · last ran ' + jobsAgeText(worst); }
+    else if (unknown) { state = 'warn'; text = 'Jobs · status unavailable'; }
+    pill.className = 'jobs-pill' + (state === 'ok' ? '' : ' ' + state);
+    pill.textContent = text;
+    pill.title = 'Background jobs (meant to run every ~5 minutes):\n' + lines.join('\n') + '\n\nClick for details.';
+    pill.dataset.details = lines.join('\n');
+    pill.style.display = '';
+  } catch (e) {
+    pill.style.display = 'none'; // an indicator is never worth an error message of its own
+  }
+}
+document.getElementById('jobs-pill').addEventListener('click', function(){
+  alert('Background jobs (meant to run every ~5 minutes):\n\n' + (this.dataset.details || 'No information yet.'));
+});
+
 // Shows a ticket's assignee in the detail dropdown. If that person is no longer
 // on the staff list (removed on the Access tab, or the list couldn't be read
 // for a moment) the dropdown has no option for them, and setting .value to an
@@ -1160,6 +1214,8 @@ async function afterSignIn(){
     // Same reasoning applies to the linked-asset select below.
     await loadStaffOptions();
     await loadAssets();
+    loadJobsStatus(); // not awaited: an indicator, never something that should hold up the console
+    if (!jobsStatusTimer) jobsStatusTimer = setInterval(loadJobsStatus, 5 * 60 * 1000);
     const deepLinkTicket = new URLSearchParams(location.search).get('ticket');
     if (deepLinkTicket) {
       openTicket(deepLinkTicket);

@@ -609,22 +609,49 @@ hosting model. The fix, rather than standing up a separate "bring your
 own Functions" Azure resource (a new billable App Service/Function App
 plan just for three lightweight polls): all three now run as ordinary
 HTTP endpoints under `/api/internal/*`, and a new GitHub Actions workflow
-(`.github/workflows/scheduled-ticks.yml`) calls each of them every 5
-minutes using GitHub's own cron runner instead of Azure's.
+(`.github/workflows/scheduled-ticks.yml`) was meant to call each of them every
+5 minutes using GitHub's own cron runner instead of Azure's.
+
+**That cron turned out not to run every 5 minutes.** Measured from the
+repository's Actions history over 12 days (60 runs), it fired about every
+5 hours (median 305 minutes, between 2 and 10 hours), so emailed replies, SLA
+escalations and recurring tickets were all hours late with nothing saying so
+(GitHub documents scheduled runs as best-effort and delayed under load; there
+is no setting on our side that fixes it). So the reliable trigger is now an
+**Azure Logic App** that calls all four endpoints every 5 minutes
+(`infra/scheduler-logicapp.json`, deploy steps in `infra/README.md`, about $1 a
+month, the cron secret held as a secure parameter). The GitHub workflow stays as
+a slow backstop and a manual "Run workflow" button. Two things in the app make
+that arrangement safe and observable regardless of who calls:
+- **A lease per job** (`lib/tickLease.js`). Each tick takes a lease row
+  (`CONFIG` partition, RowKey `tick-<job>`, conditional on the row's ETag) for
+  up to 5 minutes and releases it when done; a caller that arrives while it is
+  held gets `{ ok: true, skipped: true }` and does nothing. Without it two
+  overlapping callers could post an emailed reply twice, create a recurring
+  ticket twice or send an SLA escalation twice. A run that is killed simply
+  lets its lease expire, so a crash can't stop a job for good. If the lease row
+  itself can't be read or written the tick fails (500) rather than running
+  unprotected.
+- **A heartbeat** in the same row (`lastStartedAt`, `lastFinishedAt`,
+  `lastResult`, `lastError`), shown by `GET /api/jobs-status` as the staff
+  console's "Jobs" indicator: green when every job ran in the last 30 minutes,
+  amber when one is delayed or has never run, red when one failed. It is
+  read-only and carries no ticket data, so any staff member may read it.
 
 Nobody is signed in when a schedule fires, so these can't use
 `requireStaff`'s JWT flow — and the routes can't be left open either,
 since they trigger real side effects (emails, ticket creation, reopening
 tickets). `requireCronSecret` (`lib/auth.js`) gates every one of them behind a
 shared secret: one `INTERNAL_CRON_SECRET` app setting on the Static Web
-App, matched against an `X-Cron-Secret` header the GitHub Actions
-workflow sends from a repo secret of the same value. Neither the code nor
-this doc contains the actual value — set independently in both places by
-whoever has access to each.
+App, matched against an `X-Cron-Secret` header each scheduler (the Logic
+App, and the GitHub Actions workflow from a repo secret) sends with the
+same value. Neither the code nor this doc contains the actual value — set
+independently in each place by whoever has access to it.
 
 The recurring-tickets job's own due-check (elapsed time since
 `lastCreatedAt`) is what actually gates ticket creation, so being invoked
-every 5 minutes instead of once a day is harmless — it just no-ops on
+every 5 minutes instead of once a day is harmless (and the lease above keeps
+two callers from both seeing a template as due) — it just no-ops on
 every tick where nothing is due yet, rather than needing its own separate
 schedule.
 

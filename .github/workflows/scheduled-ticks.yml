@@ -4,14 +4,14 @@ name: Help Desk scheduled background jobs
 # triggers (confirmed against Microsoft's own docs) -- Timer Triggers are
 # silently never invoked in this hosting model. Rather than standing up a
 # separate "bring your own Functions" Azure resource just to get a working
-# scheduler, these three background jobs (email-in replies, SLA breach
-# escalation, recurring ticket creation) run as ordinary HTTP endpoints
-# instead, and this workflow calls each of them on a schedule using
-# GitHub's own cron runner. Every job is naturally idempotent/safe to call
-# more often than strictly needed (see each function's own comments), so
-# one shared 5-minute schedule for all three is simpler than juggling
-# separate schedules -- the daily recurring-ticket job just no-ops on
-# every tick where nothing is actually due yet.
+# scheduler, these four background jobs (email-in replies, SLA breach
+# escalation, recurring ticket creation, auto-closing resolved tickets) run
+# as ordinary HTTP endpoints instead, and this workflow calls each of them
+# on a schedule using GitHub's own cron runner. Every job is naturally
+# idempotent/safe to call more often than strictly needed (see each
+# function's own comments), so one shared 5-minute schedule for all four is
+# simpler than juggling separate schedules -- the daily recurring-ticket
+# job just no-ops on every tick where nothing is actually due yet.
 #
 # Requires a repo secret INTERNAL_CRON_SECRET, matching the app setting of
 # the same name on the jetcityit-helpdesk Static Web App -- this is what
@@ -43,4 +43,10 @@ jobs:
         continue-on-error: true
         run: |
           curl -sf -X POST "https://helpdesk.jetcityit.com/api/internal/recurring-tickets-tick" \
+            -H "X-Cron-Secret: ${{ secrets.INTERNAL_CRON_SECRET }}"
+
+      - name: Auto-close resolved tickets tick
+        continue-on-error: true
+        run: |
+          curl -sf -X POST "https://helpdesk.jetcityit.com/api/internal/auto-close-tick" \
             -H "X-Cron-Secret: ${{ secrets.INTERNAL_CRON_SECRET }}"

@@ -500,11 +500,13 @@ fails the request) with a direct link to the ticket —
 ticket immediately instead of the list, rather than dropping the assignee
 onto the console's front page.
 
-## Scheduled background jobs (SLA escalation, recurring tickets, email-in)
+## Scheduled background jobs (SLA escalation, recurring tickets, email-in, auto-close)
 
-Three features need to run on a schedule with no user request to hang off
-of: SLA breach escalation, recurring-ticket creation, and email-in reply
-polling (below). All three were originally built as Azure Functions Timer
+Three features originally needed to run on a schedule with no user request
+to hang off of: SLA breach escalation, recurring-ticket creation, and
+email-in reply polling (below); auto-close of resolved tickets was added
+later as a fourth, on the same mechanism (see its own paragraph below).
+The first three were originally built as Azure Functions Timer
 Triggers (`app.timer(...)`) — **which silently never ran**, discovered
 only while testing email-in replies. Azure Static Web Apps' managed
 Functions integration (what this whole `api/` folder deploys as) only
@@ -519,7 +521,7 @@ minutes using GitHub's own cron runner instead of Azure's.
 Nobody is signed in when a schedule fires, so these can't use
 `requireStaff`'s JWT flow — and the routes can't be left open either,
 since they trigger real side effects (emails, ticket creation, reopening
-tickets). `requireCronSecret` (`lib/auth.js`) gates all three behind a
+tickets). `requireCronSecret` (`lib/auth.js`) gates every one of them behind a
 shared secret: one `INTERNAL_CRON_SECRET` app setting on the Static Web
 App, matched against an `X-Cron-Secret` header the GitHub Actions
 workflow sends from a repo secret of the same value. Neither the code nor
@@ -543,6 +545,55 @@ message processed, stored at a reserved `CONFIG` partition row) so each
 poll only looks at what's new. Requires the app registration's
 already-existing app-only Graph credentials plus a `Mail.Read`
 Application permission (admin-consented separately from this feature's
+**Auto-close** (`autoClose.js`, `POST /api/internal/auto-close-tick`) is a
+fourth tick on the same schedule and secret: any ticket that has been
+`Resolved` for 3 days (`AUTO_CLOSE_DAYS`) is set to `Closed`.
+
+- **The 3-day clock** runs from the *later* of `resolvedAt` and
+  `updatedAt`, not `resolvedAt` alone. `resolvedAt` is only set the first
+  time a ticket reaches a terminal state, so a ticket staff move back from
+  Closed to Resolved keeps its old `resolvedAt` and would otherwise be
+  re-closed on the very next tick. Any staff edit or reply bumps
+  `updatedAt`, so touching a Resolved ticket restarts the 3 days; it also
+  covers old tickets resolved before `resolvedAt` was tracked. A ticket
+  with neither timestamp parseable is skipped, not closed on no evidence.
+- **Client replies** reopen a Resolved ticket to `Open` (individual
+  portal, Organization Portal, and email-in all do this), so a ticket
+  still in `Resolved` has had no client *reply* since. A 👎 rating does
+  not reopen, so it is checked explicitly: `rating === 'no'` tickets are
+  skipped and stay `Resolved` (closing them would drop them out of the
+  staff console's default view, which hides `Closed`, and bury the one
+  ticket someone should look at).
+- **Silent.** No email to the client (they were already told it was
+  resolved) and no staff broadcast. The only trace is an activity-trail
+  entry ("Auto-closed after 3 days in Resolved") and a `ticket.autoClose`
+  audit line. Resolved → Closed is not a reopen, so the rating and
+  `resolvedAt` are untouched, same as a manual close. The `updatedAt`
+  bump on close is visible to clients as "Updated just now".
+- **Race guard.** The write is conditional on the row's ETag from the
+  scan, so a client reply that reopens the ticket between the scan and the
+  write isn't overwritten back to Closed. A 412 (changed since the scan)
+  or 404 (deleted mid-run) is skipped quietly; anything else logs
+  `AUTO_CLOSE_FAILED`. If the SDK ever stops returning `etag` on listed
+  entities the write silently becomes unconditional, so one
+  `AUTO_CLOSE_NO_ETAG` line is logged per run as a trace.
+- **Backlog cap.** At most 50 tickets (`MAX_PER_TICK`) close per run; the
+  rest follow on later 5-minute ticks (`AUTO_CLOSE_BACKLOG` is logged when
+  anything is deferred). The first run after deploy therefore closes every
+  historical `Resolved` ticket already older than 3 days (not a 👎).
+
+Known gaps, deliberately left alone: merging into a `Resolved` ticket
+doesn't reopen it, so it can be auto-closed even though the merge just
+added content; a staff panel left open on a ticket that then auto-closes
+can Save it back to `Resolved` (and email the client the status change);
+and an email reply arriving on a ticket more than 30 days past
+`resolvedAt` is logged but not reopened once it is `Closed` (the existing
+`emailIngest.js` stale-closed rule).
+
+Because the GitHub Actions workflow file defines the schedule, this
+endpoint does nothing until that file is deployed with the new step — and
+`INTERNAL_CRON_SECRET` is already set from the other three jobs.
+
 rollout -- `Mail.Send` alone doesn't grant read access).
 
 **Threading a reply to its ticket**: every outbound email this app sends

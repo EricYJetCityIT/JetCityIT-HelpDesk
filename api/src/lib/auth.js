@@ -115,9 +115,9 @@ async function requireStaff(request) {
 // ingest) that silently never fired, because Timer Triggers aren't
 // supported in this hosting model at all. Rather than standing up a
 // separate "bring your own Functions" app (a new billable Azure resource
-// with its own hosting plan), those three now run as ordinary HTTP
-// endpoints invoked on a schedule by a GitHub Actions workflow instead of
-// by Azure itself. Nobody is signed in when a schedule fires, so this
+// with its own hosting plan), those three (and the auto-close job added
+// since) now run as ordinary HTTP endpoints invoked on a schedule by a
+// GitHub Actions workflow instead of by Azure itself. Nobody is signed in when a schedule fires, so this
 // can't use requireStaff's JWT flow, and the route can't be left open
 // either -- a shared secret (one new INTERNAL_CRON_SECRET app setting,
 // matched against a GitHub Actions repo secret of the same value) is the

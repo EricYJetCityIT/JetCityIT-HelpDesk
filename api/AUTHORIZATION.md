@@ -406,6 +406,17 @@ separate upload call. Storage/validation lives in
 email" field is the .eml entry point; it feeds the same `attachments` array
 as the screenshot picker rather than a separate field.
 
+A client reply (individual portal and Organization Portal) needs reply text
+**or** at least one attachment: pictures alone are a valid reply, and a
+reply with neither is a 400. The reply forms mirror this and say so inline
+("Type a message or attach an image before sending") instead of the button
+silently doing nothing, and they also report *why* a picked file was left
+out (wrong type, over 10 MB, over the 4-file/20 MB caps) rather than
+dropping it from the picker without a word. Staff notification emails note
+how many images came with a reply (`replyBodyHtml` in `lib/html.js`), since
+the text alone no longer says whether any did. Emailed replies can carry
+pictures too -- see "Email-in replies" below.
+
 - **Never trust the client's declared type.** Every upload is classified by
   its actual file-signature bytes (`sniffImageType`), and the *sniffed* type
   is what gets stored and served — a request claiming `image/png` for

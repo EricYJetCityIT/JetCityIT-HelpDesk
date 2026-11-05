@@ -2,7 +2,7 @@ const { app } = require('@azure/functions');
 const { AuthError, authErrorResponse } = require('../lib/auth');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { clientIp } = require('../lib/ip');
-const { escapeHtml } = require('../lib/html');
+const { escapeHtml, replyBodyHtml } = require('../lib/html');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { audit } = require('../lib/audit');
 const { odataEscape } = require('../lib/odata');
@@ -669,7 +669,9 @@ app.http('orgTicketReply', {
 
       const body = await request.json().catch(() => ({}));
       const text = String(body.body || '').trim().slice(0, 5000);
-      if (!text) throw new AuthError(400, 'Reply body is required');
+      // A reply can be pictures only, but it needs one or the other -- the
+      // attachments themselves are validated below.
+      if (!text && !(Array.isArray(body.attachments) && body.attachments.length)) throw new AuthError(400, 'Reply body is required');
 
       const { ticketId } = request.params;
       await ensureTicketsTable();
@@ -733,7 +735,7 @@ app.http('orgTicketReply', {
 
       try {
         const html = `<p>Organization portal reply on ticket ${escapeHtml(ticketId)} (${escapeHtml(meta.subject)}) from <strong>${escapeHtml(session.name)}</strong> (${escapeHtml(session.domain)}):</p>
-<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+${replyBodyHtml(text, attachments.length)}
 <p><a href="https://helpdesk.jetcityit.com/staff.html">Open in staff console</a></p>`;
         await sendMail({ from: SUPPORT_MAILBOX, to: SUPPORT_MAILBOX, subject: `Client replied: ${meta.subject} [${ticketId}]`, html });
       } catch (e) {
@@ -743,7 +745,7 @@ app.http('orgTicketReply', {
       await notifyStaffTeam(context, {
         subject: `Requester replied: ${meta.subject} [${ticketId}]`,
         html: `<p><strong>${escapeHtml(session.name)}</strong> (${escapeHtml(session.domain)}) replied on ticket ${escapeHtml(ticketId)}:</p>
-<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+${replyBodyHtml(text, attachments.length)}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
       });
 

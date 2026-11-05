@@ -296,8 +296,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <textarea id="reply-body" placeholder="Add a reply…"></textarea>
     </div>
     <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-    <div class="file-hint">Up to 4 images, 10 MB each.</div>
+    <div class="file-hint">Up to 4 images (PNG, JPG, GIF or WEBP), 10 MB each, 20 MB total.</div>
     <div class="file-list" id="reply-file-list"></div>
+    <div class="err-msg" id="reply-err" role="alert" style="display:none"></div>
     <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
   </div>
   <div class="detail-card" id="rating-card" style="display:none">
@@ -492,8 +493,17 @@ async function loadTicketList(){
 let currentTicketId = null;
 
 async function openTicket(id){
+  if (id !== currentTicketId) {
+    // A half-written reply or picked pictures belong to the ticket they were
+    // made on -- carried over to another ticket they'd be sent to the wrong one,
+    // and a pictures-only reply makes that easy to do by accident.
+    document.getElementById('reply-body').value = '';
+    replySelectedFiles = [];
+    renderReplyFileList();
+  }
   currentTicketId = id;
   showView('detail-view');
+  showReplyErr('');
   document.getElementById('thread').innerHTML = 'Loading…';
   try {
     const t = await clientFetch('/tickets/' + encodeURIComponent(id), { query: { email: session.email, token: session.token } });
@@ -593,7 +603,33 @@ document.getElementById('back-btn').addEventListener('click', loadTicketList);
 // ── Reply attachments ──
 const MAX_REPLY_FILES = 4;
 const MAX_REPLY_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_REPLY_TOTAL_BYTES = 20 * 1024 * 1024; // the server's combined cap per message
 let replySelectedFiles = [];
+
+function showReplyErr(msg){
+  const el = document.getElementById('reply-err');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+
+// Checks the file's real first bytes against the same signatures the server
+// uses (sniffImageType in lib/attachments.js) -- NOT the browser-reported type
+// or extension, which can be empty or oddly named (image/pjpeg, .jfif, a
+// locked-down Windows registry) for a perfectly good screenshot and would
+// wrongly refuse it. A file the browser can't read at all is let through: the
+// server decides.
+async function looksLikeSupportedImage(f){
+  try {
+    const b = new Uint8Array(await f.slice(0, 12).arrayBuffer());
+    const at = function(off, sig){ return sig.every(function(v, i){ return b[off + i] === v; }); };
+    return at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) ||                                // PNG
+      at(0, [0xff, 0xd8, 0xff]) ||                                                                     // JPEG
+      (at(0, [0x47, 0x49, 0x46, 0x38]) && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) ||        // GIF87a / GIF89a
+      (at(0, [0x52, 0x49, 0x46, 0x46]) && at(8, [0x57, 0x45, 0x42, 0x50]));                            // WEBP
+  } catch (e) {
+    return true;
+  }
+}
 
 function renderReplyFileList(){
   document.getElementById('reply-file-list').innerHTML = replySelectedFiles.map(function(f, i){
@@ -605,22 +641,34 @@ function renderReplyFileList(){
   }).join('');
 }
 
-document.getElementById('reply-attachments').addEventListener('change', function(e){
+document.getElementById('reply-attachments').addEventListener('change', async function(e){
   const picked = Array.prototype.slice.call(e.target.files);
+  e.target.value = '';
+  // Anything not added says why, rather than quietly vanishing from the picker.
+  const problems = [];
   for (const f of picked) {
-    if (replySelectedFiles.length >= MAX_REPLY_FILES) break;
-    if (f.size > MAX_REPLY_FILE_BYTES) { alert(f.name + ' is larger than 10 MB and was skipped.'); continue; }
+    const isImage = await looksLikeSupportedImage(f);
+    // Everything below is synchronous, so the caps are checked against the list
+    // as it is NOW -- a second pick can land while the bytes above are read.
+    if (replySelectedFiles.length >= MAX_REPLY_FILES) { problems.push('Only ' + MAX_REPLY_FILES + ' images can be attached to one reply; the rest were skipped.'); break; }
+    if (!isImage) { problems.push(f.name + ' was skipped: only PNG, JPG, GIF or WEBP images can be attached.'); continue; }
+    if (f.size > MAX_REPLY_FILE_BYTES) { problems.push(f.name + ' was skipped: it is larger than 10 MB.'); continue; }
+    const totalBytes = replySelectedFiles.reduce(function(sum, kept){ return sum + kept.size; }, 0);
+    if (totalBytes + f.size > MAX_REPLY_TOTAL_BYTES) { problems.push(f.name + ' was skipped: attachments can total at most 20 MB.'); continue; }
     replySelectedFiles.push(f);
   }
-  e.target.value = '';
   renderReplyFileList();
+  showReplyErr(problems.join(' '));
 });
+
+document.getElementById('reply-body').addEventListener('input', function(){ showReplyErr(''); });
 
 document.getElementById('reply-file-list').addEventListener('click', function(e){
   const btn = e.target.closest('.remove');
   if (!btn) return;
   replySelectedFiles.splice(Number(btn.dataset.i), 1);
   renderReplyFileList();
+  showReplyErr(''); // a "too many / too big" note no longer applies once something is removed
 });
 
 function fileToBase64(file){
@@ -635,9 +683,22 @@ function fileToBase64(file){
 document.getElementById('reply-send-btn').addEventListener('click', async function(){
   const ta = document.getElementById('reply-body');
   const text = ta.value.trim();
-  if (!text) return;
+  // A reply can be pictures alone, but never nothing -- and say so, since a
+  // button that silently does nothing reads as broken.
+  if (!text && !replySelectedFiles.length) {
+    showReplyErr('Type a message or attach an image before sending.');
+    ta.focus();
+    return;
+  }
+  showReplyErr('');
   const btn = this;
+  const fileInput = document.getElementById('reply-attachments');
   btn.disabled = true;
+  btn.textContent = 'Sending…';
+  // Locked while in flight: on success the draft and picker are cleared, which
+  // would silently throw away anything typed or added after the click.
+  ta.disabled = true;
+  fileInput.disabled = true;
   try {
     const attachments = await Promise.all(replySelectedFiles.map(async function(f){
       return { fileName: f.name, dataBase64: await fileToBase64(f) };
@@ -654,6 +715,9 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
     alert('Failed to send reply: ' + e.message);
   } finally {
     btn.disabled = false;
+    btn.textContent = 'Send reply';
+    ta.disabled = false;
+    fileInput.disabled = false;
   }
 });
 

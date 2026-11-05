@@ -2,7 +2,7 @@ const { app } = require('@azure/functions');
 const { getClient, ensureTable, genMessageRowKey, applyTicketRating } = require('../lib/tables');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
-const { escapeHtml } = require('../lib/html');
+const { escapeHtml, replyBodyHtml } = require('../lib/html');
 const { AuthError, authErrorResponse } = require('../lib/auth');
 const {
   normalizeEmail,
@@ -191,7 +191,9 @@ app.http('clientTicketReply', {
       await verifyClientToken(email, token);
 
       const text = String(body.body || '').trim().slice(0, 5000);
-      if (!text) throw new AuthError(400, 'Reply body is required');
+      // A reply can be pictures only (a screenshot says it all), but it needs
+      // one or the other -- the attachments themselves are validated below.
+      if (!text && !(Array.isArray(body.attachments) && body.attachments.length)) throw new AuthError(400, 'Reply body is required');
 
       const { ticketId } = request.params;
       await ensureTable();
@@ -268,7 +270,7 @@ app.http('clientTicketReply', {
 
       try {
         const html = `<p>Client reply on ticket ${escapeHtml(ticketId)} (${escapeHtml(meta.subject)}):</p>
-<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+${replyBodyHtml(text, attachments.length)}
 <p><a href="https://helpdesk.jetcityit.com/staff.html">Open in staff console</a></p>`;
         await sendMail({ from: SUPPORT_MAILBOX, to: SUPPORT_MAILBOX, subject: `Client replied: ${meta.subject} [${ticketId}]`, html });
       } catch (e) {
@@ -278,7 +280,7 @@ app.http('clientTicketReply', {
       await notifyStaffTeam(context, {
         subject: `Requester replied: ${meta.subject} [${ticketId}]`,
         html: `<p>${escapeHtml(meta.name)} (${escapeHtml(meta.email)}) replied on ticket ${escapeHtml(ticketId)}:</p>
-<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>
+${replyBodyHtml(text, attachments.length)}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
       });
 

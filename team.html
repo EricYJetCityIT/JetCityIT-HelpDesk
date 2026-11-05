@@ -355,8 +355,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <div class="field">
         <label for="new-ticket-attachments">Attach screenshots (optional)</label>
         <input type="file" id="new-ticket-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-        <div class="file-hint">Up to 4 images, 10 MB each.</div>
+        <div class="file-hint">Up to 4 images (PNG, JPG, GIF or WEBP), 10 MB each.</div>
         <div class="file-list" id="new-ticket-file-list"></div>
+        <div class="err-msg" id="new-ticket-pick-err" role="alert" style="display:none"></div>
       </div>
       <div class="field">
         <label for="new-ticket-eml">Attach an email (optional)</label>
@@ -391,8 +392,9 @@ tbody td{padding:13px 16px;vertical-align:middle}
       <textarea id="reply-body" placeholder="Add a reply…"></textarea>
     </div>
     <input type="file" id="reply-attachments" accept="image/png,image/jpeg,image/gif,image/webp" multiple/>
-    <div class="file-hint">Up to 4 images, 10 MB each.</div>
+    <div class="file-hint">Up to 4 images (PNG, JPG, GIF or WEBP), 10 MB each, 20 MB total.</div>
     <div class="file-list" id="reply-file-list"></div>
+    <div class="err-msg" id="reply-err" role="alert" style="display:none"></div>
     <button class="reply-send-btn" id="reply-send-btn">Send reply</button>
   </div>
 </div>
@@ -745,8 +747,16 @@ document.getElementById('export-csv-btn').addEventListener('click', function(){
 let currentTicketId = null;
 
 async function openTicket(id){
+  if (id !== currentTicketId) {
+    // A half-written reply or picked pictures belong to the ticket they were
+    // made on -- carried over to another ticket they'd be sent to the wrong one,
+    // and a pictures-only reply makes that easy to do by accident.
+    document.getElementById('reply-body').value = '';
+    replyFilePicker.reset();
+  }
   currentTicketId = id;
   showView('detail-view');
+  showReplyErr('');
   document.getElementById('thread').innerHTML = 'Loading…';
   try {
     const t = await orgFetch('/tickets/' + encodeURIComponent(id));
@@ -861,6 +871,26 @@ document.getElementById('back-btn').addEventListener('click', loadTicketList);
 // ── Attachment pickers (reply form + new-ticket form share this) ──
 const MAX_ATTACH_FILES = 4;
 const MAX_ATTACH_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACH_TOTAL_BYTES = 20 * 1024 * 1024; // the server's combined cap per message
+
+// Checks the file's real first bytes against the same signatures the server
+// uses (sniffImageType in lib/attachments.js) -- NOT the browser-reported type
+// or extension, which can be empty or oddly named (image/pjpeg, .jfif, a
+// locked-down Windows registry) for a perfectly good screenshot and would
+// wrongly refuse it. A file the browser can't read at all is let through: the
+// server decides.
+async function looksLikeSupportedImage(f){
+  try {
+    const b = new Uint8Array(await f.slice(0, 12).arrayBuffer());
+    const at = function(off, sig){ return sig.every(function(v, i){ return b[off + i] === v; }); };
+    return at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) ||                                // PNG
+      at(0, [0xff, 0xd8, 0xff]) ||                                                                     // JPEG
+      (at(0, [0x47, 0x49, 0x46, 0x38]) && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) ||        // GIF87a / GIF89a
+      (at(0, [0x52, 0x49, 0x46, 0x46]) && at(8, [0x57, 0x45, 0x42, 0x50]));                            // WEBP
+  } catch (e) {
+    return true;
+  }
+}
 
 // Each item is either {kind:'file', file: File} (from the picker) or
 // {kind:'extracted', fileName, dataBase64, mimeType, fromEml:true} (an
@@ -875,8 +905,13 @@ function itemThumbSrc(item){
 function itemName(item){
   return item.kind === 'file' ? item.file.name : item.fileName;
 }
+function itemBytes(item){
+  return item.kind === 'file' ? item.file.size : Math.floor(item.dataBase64.length * 0.75);
+}
 
-function createFilePicker(inputId, listId){
+// `onProblem` is told (with an empty string when all is well) why anything
+// picked was NOT added, so a skipped file never just vanishes from the list.
+function createFilePicker(inputId, listId, onProblem){
   let items = [];
   const inputEl = document.getElementById(inputId);
   const listEl = document.getElementById(listId);
@@ -889,21 +924,30 @@ function createFilePicker(inputId, listId){
       '</div>';
     }).join('');
   }
-  inputEl.addEventListener('change', function(e){
+  inputEl.addEventListener('change', async function(e){
     const picked = Array.prototype.slice.call(e.target.files);
+    e.target.value = '';
+    const problems = [];
     for (const f of picked) {
-      if (items.length >= MAX_ATTACH_FILES) break;
-      if (f.size > MAX_ATTACH_FILE_BYTES) { alert(f.name + ' is larger than 10 MB and was skipped.'); continue; }
+      const isImage = await looksLikeSupportedImage(f);
+      // Everything below is synchronous, so the caps are checked against the
+      // list as it is NOW -- a second pick can land while the bytes above are read.
+      if (items.length >= MAX_ATTACH_FILES) { problems.push('Only ' + MAX_ATTACH_FILES + ' images can be attached; the rest were skipped.'); break; }
+      if (!isImage) { problems.push(f.name + ' was skipped: only PNG, JPG, GIF or WEBP images can be attached.'); continue; }
+      if (f.size > MAX_ATTACH_FILE_BYTES) { problems.push(f.name + ' was skipped: it is larger than 10 MB.'); continue; }
+      const totalBytes = items.reduce(function(sum, item){ return sum + itemBytes(item); }, 0);
+      if (totalBytes + f.size > MAX_ATTACH_TOTAL_BYTES) { problems.push(f.name + ' was skipped: attachments can total at most 20 MB.'); continue; }
       items.push({ kind: 'file', file: f });
     }
-    e.target.value = '';
     render();
+    onProblem(problems.join(' '));
   });
   listEl.addEventListener('click', function(e){
     const btn = e.target.closest('.remove');
     if (!btn) return;
     items.splice(Number(btn.dataset.i), 1);
     render();
+    onProblem(''); // a "too many / too big" note no longer applies once something is removed
   });
   return {
     getFiles: function(){ return items; },
@@ -930,8 +974,22 @@ function createFilePicker(inputId, listId){
   };
 }
 
-const replyFilePicker = createFilePicker('reply-attachments', 'reply-file-list');
-const newTicketFilePicker = createFilePicker('new-ticket-attachments', 'new-ticket-file-list');
+function showReplyErr(msg){
+  const el = document.getElementById('reply-err');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+// Its own line beside the picker rather than the form's #new-ticket-err (which
+// sits at the top, can be off-screen from the file input, and is also used for
+// "subject required" / submit failures that a pick must not wipe).
+function showNewTicketPickErr(msg){
+  const el = document.getElementById('new-ticket-pick-err');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+
+const replyFilePicker = createFilePicker('reply-attachments', 'reply-file-list', showReplyErr);
+const newTicketFilePicker = createFilePicker('new-ticket-attachments', 'new-ticket-file-list', showNewTicketPickErr);
 
 function fileToBase64(file){
   return new Promise(function(resolve, reject){
@@ -955,9 +1013,22 @@ function collectAttachments(picker){
 document.getElementById('reply-send-btn').addEventListener('click', async function(){
   const ta = document.getElementById('reply-body');
   const text = ta.value.trim();
-  if (!text) return;
+  // A reply can be pictures alone, but never nothing -- and say so, since a
+  // button that silently does nothing reads as broken.
+  if (!text && !replyFilePicker.getFiles().length) {
+    showReplyErr('Type a message or attach an image before sending.');
+    ta.focus();
+    return;
+  }
+  showReplyErr('');
   const btn = this;
+  const fileInput = document.getElementById('reply-attachments');
   btn.disabled = true;
+  btn.textContent = 'Sending…';
+  // Locked while in flight: on success the draft and picker are cleared, which
+  // would silently throw away anything typed or added after the click.
+  ta.disabled = true;
+  fileInput.disabled = true;
   try {
     const attachments = await collectAttachments(replyFilePicker);
     await orgFetch('/tickets/' + encodeURIComponent(currentTicketId) + '/replies', {
@@ -971,8 +1042,13 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
     alert('Failed to send reply: ' + e.message);
   } finally {
     btn.disabled = false;
+    btn.textContent = 'Send reply';
+    ta.disabled = false;
+    fileInput.disabled = false;
   }
 });
+
+document.getElementById('reply-body').addEventListener('input', function(){ showReplyErr(''); });
 
 // ── New ticket ──
 // Same category list tickets.js/tables.js's TICKET_CATEGORIES defines
@@ -987,6 +1063,7 @@ document.getElementById('new-ticket-category').innerHTML = NEW_TICKET_CATEGORIES
 document.getElementById('new-ticket-btn').addEventListener('click', function(){
   document.getElementById('new-ticket-form').reset();
   document.getElementById('new-ticket-err').style.display = 'none';
+  showNewTicketPickErr('');
   newTicketFilePicker.reset();
   clearNewTicketEmlState();
   showView('new-ticket-view');

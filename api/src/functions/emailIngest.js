@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const { app } = require('@azure/functions');
 const { getClient, ensureTable, genMessageRowKey, recordActivity } = require('../lib/tables');
 const { sendMail, SUPPORT_MAILBOX, getInboxMessagesSince } = require('../lib/graph');
-const { escapeHtml } = require('../lib/html');
+const { escapeHtml, replyBodyHtml } = require('../lib/html');
+const { deleteAttachments } = require('../lib/attachments');
+const { importEmailAttachments, describeNotImported, stripCidPlaceholders } = require('../lib/emailAttachments');
 const { normalizeEmail } = require('../lib/clientAccess');
 const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 const { notifyStaffTeam } = require('../lib/staffBroadcast');
@@ -39,6 +41,17 @@ const TICKET_ID_RE = /\[(HD-\d{8}-[A-Z0-9]{4})\]/;
 // track.html already uses to nudge a client toward filing a new ticket.
 const STALE_CLOSED_DAYS = 30;
 
+// How long an email's attachments are retried across polls when Graph or blob
+// storage is failing transiently, before it goes through as text with a "not
+// imported" note instead. Without a bound, one persistent outage would stall
+// the cursor -- and every text-only reply behind it -- indefinitely.
+const ATTACHMENT_RETRY_WINDOW_MS = 30 * 60 * 1000;
+// Stop STARTING new messages once a poll has run this long. A backlog (after
+// an outage) of emails with pictures could otherwise outlast the HTTP
+// invocation limit mid-message; the unprocessed rest just waits for the next
+// poll, since the cursor only moves past what was actually handled.
+const POLL_TIME_BUDGET_MS = 150 * 1000;
+
 // Checks the shared helpdesk@ mailbox's Inbox for new messages and threads
 // matching ones into the relevant ticket as a client reply -- lets a
 // client just hit "reply" on a notification email instead of going
@@ -50,8 +63,10 @@ const STALE_CLOSED_DAYS = 30;
 // poll, not a Graph webhook subscription: no clientState-signature
 // verification / subscription-renewal machinery needed for a small team
 // where a few minutes of latency on an email reply is completely
-// unnoticed. Text-only for now -- an attachment on an inbound email reply
-// isn't picked up; the portal still handles that.
+// unnoticed. Picture attachments (PNG/JPG/GIF/WEBP, including ones pasted
+// into the body) are imported onto the ticket the same way a portal upload
+// is -- see lib/emailAttachments.js; any other file type is left in the
+// mailbox and flagged to staff, not silently dropped.
 app.http('emailIngestCheck', {
   methods: ['POST'],
   authLevel: 'anonymous',
@@ -83,8 +98,13 @@ app.http('emailIngestCheck', {
       // don't compare correctly as plain strings.
       let safeCursor = cursor;
       let processedCount = 0;
+      const deadline = Date.now() + POLL_TIME_BUDGET_MS;
 
       for (const msg of messages) {
+        if (Date.now() > deadline) {
+          context.log('EMAIL_INGEST_TIME_BUDGET_REACHED ' + JSON.stringify({ processedCount, fetched: messages.length }));
+          break;
+        }
         const key = dedupKey(msg.id);
         let alreadyHandled = false;
         try {
@@ -179,8 +199,8 @@ async function processInboundMessage(table, context, msg) {
     return;
   }
 
-  const bodyText = String((msg.uniqueBody && msg.uniqueBody.content) || '').trim().slice(0, 5000);
-  if (!bodyText) return; // nothing new to add (e.g. just quoted history, or an auto-reply with no real text)
+  const rawText = String((msg.uniqueBody && msg.uniqueBody.content) || '');
+  let bodyText = stripCidPlaceholders(rawText).trim().slice(0, 5000);
 
   // Subject-line matching has no notion of "this reply is actually part of
   // the SAME conversation" -- a client reusing a months-old notification
@@ -194,6 +214,26 @@ async function processInboundMessage(table, context, msg) {
     (Date.now() - new Date(meta.resolvedAt || meta.updatedAt).getTime()) > STALE_CLOSED_DAYS * 86400000;
 
   const fromName = (msg.from && msg.from.emailAddress && msg.from.emailAddress.name) || fromAddress;
+
+  // Stored BEFORE the message row, like a portal upload, so the row can point
+  // at them. Always looked for on a verified reply rather than gated on
+  // Graph's hasAttachments (false when the only attachments are inline
+  // pictures -- exactly a pasted screenshot) or on a "[cid:" placeholder in
+  // the text (which a client can render as alt text instead): one small
+  // Graph call per genuine reply. A permanent problem with an attachment never
+  // throws (see importEmailAttachments); a transient one does, so this message
+  // is retried on the next poll -- until it's old enough that it goes through
+  // as text with a "not imported" note instead.
+  const ageMs = msg.receivedDateTime ? Date.now() - new Date(msg.receivedDateTime).getTime() : 0;
+  const imported = await importEmailAttachments(ticketId, msg.id, rawText, { giveUp: ageMs > ATTACHMENT_RETRY_WINDOW_MS });
+  const notImported = describeNotImported(imported);
+  // No text, and no picture of the sender's either (e.g. just quoted history, an
+  // auto-reply with no real text, or an unreferenced signature logo): nothing new.
+  if (!bodyText && !imported.stored.length && !notImported) return;
+  // An email that was ONLY attachments we couldn't import would otherwise
+  // become a blank message in the client's thread; say what happened instead.
+  if (!bodyText && !imported.stored.length) bodyText = '(Email with no message text -- its attachment(s) could not be added to the ticket.)';
+
   const now = new Date().toISOString();
   const messageRowKey = genMessageRowKey();
   try {
@@ -205,7 +245,7 @@ async function processInboundMessage(table, context, msg) {
       authorName: fromName,
       authorUpn: '',
       body: bodyText,
-      attachmentsJson: '',
+      attachmentsJson: imported.stored.length ? JSON.stringify(imported.stored) : '',
       createdAt: now,
     });
 
@@ -222,18 +262,28 @@ async function processInboundMessage(table, context, msg) {
     }
     await table.updateEntity(update, 'Merge');
   } catch (e) {
+    await deleteAttachments(ticketId, imported.stored);
     await table.deleteEntity(ticketId, messageRowKey).catch(() => {});
     throw e;
   }
 
   await recordActivity(table, ticketId, `Reply received by email from ${fromAddress}` + (isStaleClosed ? ' (ticket left Closed -- more than 30 days old, needs manual review)' : ''));
+  // Staff-only trail (clients never see activity rows): the sender attached
+  // something we didn't bring across, and the original is still in the
+  // helpdesk@ mailbox if it matters.
+  if (notImported) await recordActivity(table, ticketId, `Email attachment(s) not imported: ${notImported} -- the original is still in the helpdesk@ mailbox`);
+
+  // Same note on both staff emails below.
+  const notImportedHtml = notImported
+    ? `<p><em>Not imported: ${escapeHtml(notImported)} -- still in the helpdesk@ mailbox.</em></p>`
+    : '';
 
   try {
     const staleNote = isStaleClosed
       ? `<p><em>This ticket was closed over ${STALE_CLOSED_DAYS} days ago and was NOT automatically reopened -- please review whether this is a genuine continuation or should be a new ticket.</em></p>`
       : '';
     const html = `<p>Client reply (by email) on ticket ${escapeHtml(ticketId)} (${escapeHtml(meta.subject)}):</p>
-${staleNote}<p>${escapeHtml(bodyText).replace(/\n/g, '<br/>')}</p>
+${staleNote}${replyBodyHtml(bodyText, imported.stored.length)}${notImportedHtml}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in staff console</a></p>`;
     const subjectPrefix = isStaleClosed ? 'Reply on an old closed ticket' : 'Client replied';
     await sendMail({ from: SUPPORT_MAILBOX, to: SUPPORT_MAILBOX, subject: `${subjectPrefix}: ${meta.subject} [${ticketId}]`, html });
@@ -249,7 +299,7 @@ ${staleNote}<p>${escapeHtml(bodyText).replace(/\n/g, '<br/>')}</p>
   await notifyStaffTeam(context, {
     subject: `Requester replied: ${meta.subject} [${ticketId}]`,
     html: `<p>${escapeHtml(fromName)} replied (by email) on ticket ${escapeHtml(ticketId)}:</p>
-<p>${escapeHtml(bodyText).replace(/\n/g, '<br/>')}</p>
+${replyBodyHtml(bodyText, imported.stored.length)}${notImportedHtml}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
   });
 }

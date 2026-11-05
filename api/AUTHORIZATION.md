@@ -545,17 +545,6 @@ every 5 minutes instead of once a day is harmless — it just no-ops on
 every tick where nothing is due yet, rather than needing its own separate
 schedule.
 
-## Email-in replies
-
-A client can reply directly to a notification email instead of going
-through `/track.html`. `api/src/functions/emailIngest.js` polls the
-shared `helpdesk@jetcityit.com` Inbox via Microsoft Graph (see "Scheduled
-background jobs" above for how it's actually invoked, and why it isn't a
-Timer Trigger), using a persisted cursor (`receivedDateTime` of the last
-message processed, stored at a reserved `CONFIG` partition row) so each
-poll only looks at what's new. Requires the app registration's
-already-existing app-only Graph credentials plus a `Mail.Read`
-Application permission (admin-consented separately from this feature's
 **Auto-close** (`autoClose.js`, `POST /api/internal/auto-close-tick`) is a
 fourth tick on the same schedule and secret: any ticket that has been
 `Resolved` for 3 days (`AUTO_CLOSE_DAYS`) is set to `Closed`.
@@ -605,6 +594,17 @@ Because the GitHub Actions workflow file defines the schedule, this
 endpoint does nothing until that file is deployed with the new step — and
 `INTERNAL_CRON_SECRET` is already set from the other three jobs.
 
+## Email-in replies
+
+A client can reply directly to a notification email instead of going
+through `/track.html`. `api/src/functions/emailIngest.js` polls the
+shared `helpdesk@jetcityit.com` Inbox via Microsoft Graph (see "Scheduled
+background jobs" above for how it's actually invoked, and why it isn't a
+Timer Trigger), using a persisted cursor (`receivedDateTime` of the last
+message processed, stored at a reserved `CONFIG` partition row) so each
+poll only looks at what's new. Requires the app registration's
+already-existing app-only Graph credentials plus a `Mail.Read`
+Application permission (admin-consented separately from this feature's
 rollout -- `Mail.Send` alone doesn't grant read access).
 
 **Threading a reply to its ticket**: every outbound email this app sends
@@ -615,8 +615,68 @@ used is Graph's `uniqueBody` property (requested as plain text via a
 `Prefer: outlook.body-content-type="text"` header) -- this is Graph's own
 "just the new content, quoted history already stripped" field, far more
 reliable than trying to detect "On ... wrote:" boundaries by hand.
-**Text-only for now**: an attachment on an inbound email reply is not
-ingested; the portal still handles that case.
+**Attachments on an emailed reply** (`api/src/lib/emailAttachments.js`):
+picture attachments are imported onto the ticket as part of the reply, using
+the same storage and byte-sniffing as a portal upload (`storeAttachments`),
+so a file *claiming* to be a PNG that isn't one is rejected no matter what
+the email says.
+- *Which pictures.* PNG/JPG/GIF/WEBP, max 4 per email, 10 MB each and 20 MB
+  combined. A regular attachment is always the sender's. An **inline** image
+  (a screenshot pasted into the body) is imported only if the body text
+  references its content id (`[cid:...]`) -- Outlook re-attaches earlier
+  pictures from the quoted thread on a reply, and those aren't new.
+- *Why the poll can't just trust `hasAttachments` (or the text).* Graph
+  reports `hasAttachments` as `false` when a message's only attachments are
+  inline, which is exactly a pasted screenshot, and the plain-text body shows
+  an inline image as `[cid:...]` only some of the time (a client that
+  generated alt text for the picture can render that instead). So the
+  attachment list is read for every verified reply
+  (`GET /messages/{id}/attachments`: metadata first, then one full fetch per
+  candidate image, sender's own attachments before inline ones), and an
+  inline image counts as referenced if its content id appears in the text
+  body **or**, failing that, in the HTML body (one extra
+  `GET /messages/{id}?$select=uniqueBody` with an HTML `Prefer` header,
+  fetched lazily and only when an inline image needs it). The content id is
+  matched on a boundary, with angle brackets tolerated, so `ii_1` can't match
+  `ii_10`. The `[cid:...]` placeholders are then stripped from the stored text
+  (the blank-line collapsing that goes with it only happens to text that had
+  one, so ordinary replies are stored untouched). No new permission:
+  `Mail.Read` already covers attachments.
+- *Anything else is flagged, not silently dropped.* A PDF/Visio/Word
+  attachment, an over-limit or invalid image, or a failed download is listed
+  in a staff-only activity-trail entry and in both staff notification
+  emails ("Not imported: ..."); the original is still in the `helpdesk@`
+  mailbox. An email that is *only* un-importable attachments still becomes a
+  reply (and reopens the ticket) with a one-line placeholder, rather than
+  being ignored or showing as a blank message.
+- *Errors are bounded so they can't wedge the poll.* A **permanent** problem
+  (403 for a missing permission, 404, an invalid file) degrades immediately
+  to the "not imported" note above, never an exception, so one bad attachment
+  or a missing permission can't hold every later email hostage. A
+  **transient** one (429/5xx/no response from Graph, or a blob-storage
+  failure) is retried once in place (honoring `Retry-After`, capped at 3 s),
+  and if it persists the email throws -- after deleting whatever it already
+  stored -- and is retried on the next poll like any other failure here.
+  That retrying is itself bounded: once an email is more than 30 minutes old
+  (`ATTACHMENT_RETRY_WINDOW_MS`) it goes through as text with a "not
+  imported" note instead, so a long outage can't stall the cursor, and every
+  text-only reply behind it, forever. Each attachment-related Graph call has
+  a 30 s timeout, and a poll stops *starting* new emails after 150 s
+  (`POLL_TIME_BUDGET_MS`) -- the rest wait for the next poll, since the
+  cursor only moves past what was actually handled.
+- *Only pictures count.* Whatever `storeAttachments` sniffs the bytes as, a
+  result that isn't `image/*` (a file named `.png` that is really an Outlook
+  `.eml`, which the portal forms accept on purpose) is deleted again and
+  reported as not imported.
+- *No overlapping polls.* The scheduled workflow now has a `concurrency`
+  group, so a slow poll can't overlap the next one -- two polls that both
+  saw the same email before either wrote its `EMAILDEDUP` marker would post
+  the reply twice. (Importing pictures makes a poll take seconds per email
+  instead of milliseconds, which is what widened that window.)
+- *Known limitation: signature logos.* An Outlook signature image is an inline
+  picture in the new part of the body, indistinguishable from a pasted
+  screenshot without guessing, so a sender whose signature has a logo gets it
+  attached to each emailed reply (and it counts toward the 4-image cap).
 
 **The trust boundary is the `From:` address**, same as every other
 email-based support system (Zendesk, Freshdesk, etc.) -- the ingest

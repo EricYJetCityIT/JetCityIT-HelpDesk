@@ -23,6 +23,14 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch: {}
 
+# One run at a time. A tick that outlasts the 5-minute schedule (a backlog of
+# emails with pictures) must not overlap the next one: both could pick up the
+# same email before either has written its dedup marker, and post the reply
+# twice. A run that has to wait is kept, not cancelled.
+concurrency:
+  group: helpdesk-scheduled-ticks
+  cancel-in-progress: false
+
 jobs:
   tick:
     runs-on: ubuntu-latest

@@ -108,7 +108,7 @@ async function getInboxMessagesSince(sinceIso) {
   const token = await getAppToken();
   const filter = `receivedDateTime gt ${sinceIso}`;
   const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(SUPPORT_MAILBOX)}/mailFolders/Inbox/messages` +
-    `?$filter=${encodeURIComponent(filter)}&$orderby=receivedDateTime asc&$select=id,subject,from,receivedDateTime,uniqueBody&$top=50`;
+    `?$filter=${encodeURIComponent(filter)}&$orderby=receivedDateTime asc&$select=id,subject,from,receivedDateTime,uniqueBody,hasAttachments&$top=50`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -123,4 +123,62 @@ async function getInboxMessagesSince(sinceIso) {
   return data.value || [];
 }
 
-module.exports = { sendMail, getUsersByUpns, getInboxMessagesSince, SUPPORT_MAILBOX };
+// Bound on each attachment-related Graph call, so one stalled response can't
+// hang an entire email poll (a plain fetch has no timeout of its own).
+const GRAPH_ATTACHMENT_TIMEOUT_MS = 30000;
+
+// An Error that carries the HTTP status (and Retry-After, if Graph sent one),
+// so a caller can tell a throttle/outage worth retrying from a permanent
+// failure like a missing permission -- see lib/emailAttachments.js.
+async function graphError(label, res) {
+  const text = await res.text().catch(() => '');
+  return Object.assign(new Error(`${label} ${res.status}: ${text}`), { status: res.status, retryAfter: res.headers.get('retry-after') });
+}
+
+// Attachment METADATA for one inbox message (no file contents -- a PDF or a
+// 20 MB photo shouldn't be pulled down just to find out it isn't wanted).
+// `messageId` comes from Graph's own list response above, never from user
+// input, but is still URL-encoded since Graph ids contain `=`/`-`/`_`.
+// Inline images (a screenshot pasted into the email body) are included here
+// too, which is the whole reason this exists: Graph's `hasAttachments` flag
+// is false for a message whose only attachments are inline.
+async function listMessageAttachments(messageId) {
+  const token = await getAppToken();
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(SUPPORT_MAILBOX)}/messages/${encodeURIComponent(messageId)}/attachments` +
+    `?$select=id,name,contentType,size,isInline&$top=50`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(GRAPH_ATTACHMENT_TIMEOUT_MS) });
+  if (!res.ok) throw await graphError('Graph list-attachments error', res);
+  const data = await res.json();
+  return data.value || [];
+}
+
+// One attachment in full: for a file attachment this carries `contentBytes`
+// (base64) and `contentId` (the "cid:" an inline image is referenced by in
+// the email body), neither of which the metadata listing above returns.
+async function getMessageAttachment(messageId, attachmentId) {
+  const token = await getAppToken();
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(SUPPORT_MAILBOX)}/messages/${encodeURIComponent(messageId)}` +
+    `/attachments/${encodeURIComponent(attachmentId)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(GRAPH_ATTACHMENT_TIMEOUT_MS) });
+  if (!res.ok) throw await graphError('Graph get-attachment error', res);
+  return res.json();
+}
+
+// The same unique (new, quoted-history-stripped) body as the message poll
+// reads, but as HTML. The poll's plain-text version only shows an inline image
+// as a "[cid:...]" placeholder some of the time; in the HTML the reference is
+// always an <img src="cid:...">, which is what decides whether an inline
+// picture belongs to what the sender just wrote.
+async function getMessageUniqueBodyHtml(messageId) {
+  const token = await getAppToken();
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(SUPPORT_MAILBOX)}/messages/${encodeURIComponent(messageId)}?$select=uniqueBody`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="html"' },
+    signal: AbortSignal.timeout(GRAPH_ATTACHMENT_TIMEOUT_MS),
+  });
+  if (!res.ok) throw await graphError('Graph get-body error', res);
+  const data = await res.json();
+  return (data.uniqueBody && data.uniqueBody.content) || '';
+}
+
+module.exports = { sendMail, getUsersByUpns, getInboxMessagesSince, listMessageAttachments, getMessageAttachment, getMessageUniqueBodyHtml, SUPPORT_MAILBOX };

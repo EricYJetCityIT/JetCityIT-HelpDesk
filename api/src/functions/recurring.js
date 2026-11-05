@@ -1,5 +1,6 @@
 const { app } = require('@azure/functions');
-const { requireStaff, AuthError, authErrorResponse, STAFF_UPNS } = require('../lib/auth');
+const { requireStaff, AuthError, authErrorResponse } = require('../lib/auth');
+const { getStaffUpns } = require('../lib/staffAccess');
 const { getClient, ensureTable, TICKET_CATEGORIES } = require('../lib/tables');
 const { audit } = require('../lib/audit');
 
@@ -69,7 +70,7 @@ app.http('recurringCreate', {
       if (!Number.isFinite(intervalDays) || intervalDays < 1 || intervalDays > 365) {
         throw new AuthError(400, 'Interval must be a whole number of days between 1 and 365.');
       }
-      if (assignee && !STAFF_UPNS.includes(assignee)) throw new AuthError(400, 'Invalid assignee');
+      if (assignee && !(await getStaffUpns()).includes(assignee)) throw new AuthError(400, 'Invalid assignee');
 
       await ensureTable();
       const table = getClient();
@@ -136,7 +137,7 @@ app.http('recurringUpdate', {
       }
       if (body.assignee !== undefined) {
         const assignee = String(body.assignee || '').trim().toLowerCase();
-        if (assignee && !STAFF_UPNS.includes(assignee)) throw new AuthError(400, 'Invalid assignee');
+        if (assignee && !(await getStaffUpns()).includes(assignee)) throw new AuthError(400, 'Invalid assignee');
         update.assignee = assignee;
       }
       if (body.intervalDays !== undefined) {

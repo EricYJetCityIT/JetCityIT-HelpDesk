@@ -22,11 +22,12 @@ const REQUIRED_SCOPE = 'access_as_user';
 // requires being on this allowlist. Same quick-start pattern as the
 // crew-calendar app's EDITOR_UPNS: a comma-separated app setting, no
 // app-registration change needed to add/remove staff.
-const STAFF_UPNS = (process.env.STAFF_UPNS || '')
-  .toLowerCase()
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+//
+// STAFF_UPNS here is the Azure-setting list ONLY (read-only from the site).
+// The allowlist actually enforced is that PLUS the people an access admin
+// added from the console's Access tab -- see lib/staffAccess.js, and use its
+// getStaffUpns() anywhere that needs "the whole staff team".
+const { AZURE_STAFF_UPNS: STAFF_UPNS, ACCESS_ADMIN_UPNS, getPageStaff } = require('./staffAccess');
 
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
@@ -97,8 +98,20 @@ async function requireStaff(request) {
   }
 
   const upn = String(decoded.preferred_username || decoded.upn || decoded.email || '').toLowerCase();
-  if (!upn.endsWith(ALLOWED_DOMAIN) || !STAFF_UPNS.includes(upn)) {
+  if (!upn.endsWith(ALLOWED_DOMAIN)) {
     throw new AuthError(403, 'Account not permitted');
+  }
+
+  // Staff = the Azure list OR added on the Access tab. Azure people never need the page list read at
+  // all. For anyone else the page list decides, and if it can't be read (and nothing is cached) the
+  // honest answer is 503 "try again", not a 403 that would tell a genuinely-added person they have no access.
+  const azureStaff = STAFF_UPNS.includes(upn);
+  if (!azureStaff) {
+    const { people, unavailable } = await getPageStaff();
+    if (!people.some((p) => p.upn === upn)) {
+      if (unavailable) throw new AuthError(503, 'Access list is temporarily unavailable. Please try again in a moment.');
+      throw new AuthError(403, 'Account not permitted');
+    }
   }
 
   const rl = checkRateLimit(upn);
@@ -106,7 +119,18 @@ async function requireStaff(request) {
     throw new AuthError(429, 'Too many requests — please slow down.', { retryAfterSec: rl.retryAfterSec, upn });
   }
 
-  return { name: decoded.name || upn, upn };
+  // Only people who are staff through AZURE may manage access, so someone added from the page can never
+  // hand out access themselves. If ACCESS_ADMIN_UPNS is set it narrows that to the people listed there.
+  const isAccessAdmin = azureStaff && (ACCESS_ADMIN_UPNS.length === 0 || ACCESS_ADMIN_UPNS.includes(upn));
+  return { name: decoded.name || upn, upn, isAccessAdmin };
+}
+
+// Gate for the Access tab's endpoints (list / add / remove people). Depends only on the Azure settings,
+// so it never needs the 503 case.
+function requireAccessAdmin(user) {
+  if (!user || !user.isAccessAdmin) {
+    throw new AuthError(403, 'You do not have permission to manage access.');
+  }
 }
 
 // Azure Static Web Apps' managed Functions integration only supports HTTP
@@ -157,4 +181,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireStaff, requireCronSecret, AuthError, authErrorResponse, STAFF_UPNS };
+module.exports = { requireStaff, requireAccessAdmin, requireCronSecret, AuthError, authErrorResponse, STAFF_UPNS };

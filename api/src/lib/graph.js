@@ -93,6 +93,58 @@ async function getUsersByUpns(upns) {
   );
 }
 
+// One directory user, for the Access tab's "add this person" check. Returns
+// null when no such account exists (404) and throws on anything else, so the
+// caller can tell "that person isn't in the directory" (reject) from "couldn't
+// ask right now" (try again). Looked up by the exact sign-in name -- the same
+// value the staff sign-in check matches (the token's preferred_username).
+// `upn` in the result is Graph's own canonical, lowercased userPrincipalName,
+// which is what gets stored, rather than whatever was typed.
+async function getUserByUpn(upn) {
+  const token = await getAppToken();
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=displayName,userPrincipalName,accountEnabled`,
+    { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Graph get-user error ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return {
+    upn: String(data.userPrincipalName || '').trim().toLowerCase(),
+    name: data.displayName || null,
+    enabled: data.accountEnabled !== false,
+  };
+}
+
+// The company directory (enabled accounts only) for the Access tab's "Name or
+// email" picker. Uses the same already-consented User.Read.All permission as
+// the lookups above. Follows Graph's paging, with a hard cap so a runaway
+// response can't loop forever.
+async function listDirectoryUsers() {
+  const token = await getAppToken();
+  let url = 'https://graph.microsoft.com/v1.0/users?$select=displayName,userPrincipalName,accountEnabled&$filter=' +
+    encodeURIComponent('accountEnabled eq true') + '&$top=999';
+  const out = [];
+  for (let page = 0; url && page < 10; page++) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Graph list-users error ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    (data.value || []).forEach((u) => {
+      if (u.accountEnabled === false) return;
+      const upn = String(u.userPrincipalName || '').trim().toLowerCase();
+      if (upn) out.push({ upn, name: u.displayName || null });
+    });
+    url = data['@odata.nextLink'] || null;
+  }
+  return out;
+}
+
 // Polls the shared support mailbox's Inbox for messages received after a
 // given timestamp -- used by the email-ingest timer to pick up client
 // replies sent directly to a notification email instead of through the
@@ -181,4 +233,4 @@ async function getMessageUniqueBodyHtml(messageId) {
   return (data.uniqueBody && data.uniqueBody.content) || '';
 }
 
-module.exports = { sendMail, getUsersByUpns, getInboxMessagesSince, listMessageAttachments, getMessageAttachment, getMessageUniqueBodyHtml, SUPPORT_MAILBOX };
+module.exports = { sendMail, getUsersByUpns, getUserByUpn, listDirectoryUsers, getInboxMessagesSince, listMessageAttachments, getMessageAttachment, getMessageUniqueBodyHtml, SUPPORT_MAILBOX };

@@ -178,6 +178,26 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .recurring-nav-btn{padding:6px 12px;border:1px solid var(--border);background:var(--surface);border-radius:20px;font-size:12px;font-weight:600;color:var(--text2)}
 .recurring-nav-btn:hover{background:var(--bg)}
 
+/* Access tab */
+.acc-intro{color:var(--text2);font-size:13px;line-height:1.55;margin:0 0 18px;max-width:640px}
+.acc-card{max-width:460px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:20px 22px}
+.acc-card h2{font-size:16px;font-weight:700;margin-bottom:4px}
+.acc-card .acc-desc{color:var(--text3);font-size:13px;line-height:1.5;margin-bottom:14px}
+.acc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--border)}
+.acc-who{min-width:0}
+.acc-name{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.acc-email{font-size:12px;color:var(--text3);overflow-wrap:anywhere}
+.acc-by{font-size:11px;color:var(--text3);margin-top:2px}
+.acc-side{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.acc-lock{display:inline-block;font-size:11px;font-weight:700;color:var(--text2);background:var(--bg);border:1px solid var(--border);padding:3px 9px;border-radius:20px;white-space:nowrap}
+.acc-empty{color:var(--text3);font-size:13px;padding:11px 0;border-top:1px solid var(--border)}
+.acc-add{display:flex;gap:8px;margin-top:6px;padding-top:14px;border-top:1px solid var(--border)}
+.acc-add input{flex:1;min-width:0;font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.acc-add button{padding:9px 16px;border:none;border-radius:8px;background:var(--green);color:#fff;font-weight:700;font-size:14px}
+.acc-add button:disabled{opacity:.6}
+.acc-err{margin-top:10px;font-size:13px;color:var(--red);display:none}
+.acc-ok{margin-top:10px;font-size:13px;color:var(--green-dark);display:none}
+
 .table-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);overflow:hidden}
 /* Lets a too-wide table scroll horizontally within its own card on a
    narrow screen, instead of the table-card's own overflow:hidden just
@@ -457,7 +477,7 @@ a.sheet-chip:hover{background:var(--border)}
 
 <div id="denied-view">
   <h1>You don't have access to the Help Desk console</h1>
-  <p>Your account isn't on the staff list. Ask an existing admin to add your email to <code>STAFF_UPNS</code>.</p>
+  <p>Your account isn't on the staff list. Ask an existing admin to add you from the console's Access tab (or to add your email to <code>STAFF_UPNS</code> in Azure).</p>
 </div>
 
 <div id="app-shell" style="display:none">
@@ -476,6 +496,7 @@ a.sheet-chip:hover{background:var(--border)}
       <button class="recurring-nav-btn" id="assets-nav-btn" type="button">🖥️ Assets</button>
       <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Organization Portal</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
+      <button class="recurring-nav-btn" id="access-nav-btn" type="button" style="display:none">🔑 Access</button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
         <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
@@ -697,6 +718,24 @@ a.sheet-chip:hover{background:var(--border)}
         </div>
         <button class="save-meta-btn" id="rt-create-btn" type="button">Add recurring ticket</button>
       </div>
+    </div>
+  </div>
+
+  <div id="access-view" style="display:none;max-width:820px;margin:0 auto;padding:28px 24px 60px">
+    <button class="back-link" id="access-back-btn">← Back to tickets</button>
+    <h1 style="font-size:19px;letter-spacing:-.3px;margin-bottom:8px">Access</h1>
+    <p class="acc-intro">Who can sign in to this console. People marked <strong>Azure</strong> are set in Azure settings and can only be changed there. People you add here get access the next time they open or reload the console. Only people who are set in Azure can change this page.</p>
+    <div class="acc-card">
+      <h2>Staff</h2>
+      <p class="acc-desc">Can view, reply to and manage tickets. Everyone here also appears in the assignee list, gets new-ticket and reply alerts, and is included in auto-assignment.</p>
+      <div id="access-list"><div class="acc-empty">Loading…</div></div>
+      <form class="acc-add" id="access-form" autocomplete="off">
+        <input type="text" id="access-input" list="access-dir" placeholder="Name or email" aria-label="Add someone (name or @jetcityit.com email)" maxlength="120"/>
+        <datalist id="access-dir"></datalist>
+        <button type="submit" id="access-add-btn">Add</button>
+      </form>
+      <div class="acc-err" id="access-err" role="alert"></div>
+      <div class="acc-ok" id="access-ok" role="status"></div>
     </div>
   </div>
 
@@ -1094,6 +1133,9 @@ async function afterSignIn(){
     }
     document.getElementById('app-shell').style.display = 'block';
     currentUserUpn = me.upn;
+    // Only people who are staff through Azure may manage access; the API
+    // enforces that, this just hides a tab that would only ever say "no".
+    document.getElementById('access-nav-btn').style.display = me.isAccessAdmin ? '' : 'none';
     const badge = document.getElementById('user-badge');
     badge.textContent = me.name || me.upn;
     // Options need to exist before openTicket() sets the select's value,
@@ -1111,12 +1153,16 @@ async function afterSignIn(){
     }
   } catch (e) {
     console.error('Failed to load /me:', e);
+    if (e.status === 503) {
+      // The access list couldn't be read: not the same as "you're not on it".
+      document.getElementById('denied-view').innerHTML = '<h1>Access list temporarily unavailable</h1><p>Please reload this page in a moment.</p>';
+    }
     document.getElementById('denied-view').style.display = 'block';
   }
 }
 
 // ── View switching ──
-const ALL_VIEWS = ['console-view', 'detail-view', 'recurring-view', 'analytics-view', 'assets-view', 'org-view'];
+const ALL_VIEWS = ['console-view', 'detail-view', 'recurring-view', 'analytics-view', 'assets-view', 'org-view', 'access-view'];
 function showView(id){
   ALL_VIEWS.forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
@@ -1131,6 +1177,7 @@ function showRecurring(){ showView('recurring-view'); }
 function showAnalytics(){ showView('analytics-view'); }
 function showAssets(){ showView('assets-view'); }
 function showOrg(){ showView('org-view'); }
+function showAccess(){ showView('access-view'); }
 document.getElementById('back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('recurring-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('recurring-nav-btn').addEventListener('click', function(){ showRecurring(); loadRecurringTemplates(); });
@@ -1140,6 +1187,8 @@ document.getElementById('assets-back-btn').addEventListener('click', function(){
 document.getElementById('assets-nav-btn').addEventListener('click', function(){ showAssets(); loadAssets(); });
 document.getElementById('org-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
 document.getElementById('org-nav-btn').addEventListener('click', function(){ showOrg(); loadOrgDomains(); });
+document.getElementById('access-back-btn').addEventListener('click', function(){ showConsole(); loadTickets(); });
+document.getElementById('access-nav-btn').addEventListener('click', function(){ showAccess(); loadAccess(); });
 
 // ── Ticket list ──
 // All tickets are fetched once and both the status pills and the domain
@@ -2546,6 +2595,129 @@ document.getElementById('rt-create-btn').addEventListener('click', async functio
   } catch (e) {
     alert('Failed to create: ' + e.message);
   } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Access (who may use this console) ──
+// The API decides everything (GET/POST /api/access, DELETE /api/access/{upn}:
+// only people who are staff through Azure may use them); this is just the
+// view. Azure-listed people are shown locked -- they can only be changed in
+// Azure -- and anyone added here is stored by the site and gets access the next
+// time they open or reload the console.
+let accessDirectory = []; // [{upn, name}] -- feeds the "Name or email" picker
+let accessDirectoryLoaded = false;
+
+// kind: 'err' | 'ok' | '' (clears both). Always textContent: messages can echo what was typed.
+function accessMsg(kind, text){
+  const err = document.getElementById('access-err');
+  const ok = document.getElementById('access-ok');
+  err.style.display = 'none';
+  ok.style.display = 'none';
+  if (kind === 'err') { err.textContent = text; err.style.display = 'block'; }
+  if (kind === 'ok') { ok.textContent = text; ok.style.display = 'block'; }
+}
+
+function accessDisplayName(upn){
+  const hit = staffDirectory.filter(function(s){ return s.upn === upn; })[0];
+  return hit && hit.name ? hit.name : upn;
+}
+
+function accessRowHtml(p, isAzure){
+  const name = p.name || p.upn;
+  const email = p.name ? '<div class="acc-email">' + escapeHtml(p.upn) + '</div>' : '';
+  const by = (!isAzure && p.addedBy)
+    ? '<div class="acc-by">Added by ' + escapeHtml(accessDisplayName(p.addedBy)) + (p.addedAt ? ' · ' + escapeHtml(relativeTime(p.addedAt)) : '') + '</div>'
+    : '';
+  const side = isAzure
+    ? '<span class="acc-lock" title="Set in Azure settings; can only be changed there">🔒 Azure</span>'
+    : '<button type="button" class="recurring-nav-btn acc-remove" data-upn="' + escapeHtml(p.upn) + '">Remove</button>';
+  return '<div class="acc-row"><div class="acc-who"><div class="acc-name">' + escapeHtml(name) + '</div>' + email + by + '</div>' +
+    '<div class="acc-side">' + side + '</div></div>';
+}
+
+function renderAccess(data){
+  const rows = (data.azure || []).map(function(p){ return accessRowHtml(p, true); })
+    .concat((data.page || []).map(function(p){ return accessRowHtml(p, false); }));
+  document.getElementById('access-list').innerHTML = rows.length ? rows.join('') : '<div class="acc-empty">Nobody yet.</div>';
+}
+
+async function loadAccessDirectory(){
+  try {
+    const data = await apiFetch('/access-directory');
+    accessDirectory = data.users || [];
+    accessDirectoryLoaded = accessDirectory.length > 0;
+    document.getElementById('access-dir').innerHTML = accessDirectory.map(function(u){
+      return '<option value="' + escapeHtml(u.name || u.upn) + '" label="' + escapeHtml(u.upn) + '"></option>';
+    }).join('');
+  } catch (e) {
+    // The picker is a convenience; typing a full @jetcityit.com address still works without it.
+  }
+}
+
+async function loadAccess(){
+  accessMsg('', '');
+  document.getElementById('access-list').innerHTML = '<div class="acc-empty">Loading…</div>';
+  try {
+    renderAccess(await apiFetch('/access'));
+  } catch (e) {
+    document.getElementById('access-list').innerHTML = '';
+    accessMsg('err', e.status === 403 ? "You don't have permission to manage access." : 'Failed to load: ' + e.message);
+    return;
+  }
+  if (!accessDirectoryLoaded) loadAccessDirectory();
+}
+
+// "Name or email" -> a sign-in address. Anything with an @ is taken as the address (the server checks it
+// is a real, enabled @jetcityit.com account); a name must match exactly one person in the directory.
+function resolveAccessInput(text){
+  const t = String(text || '').trim();
+  if (!t) return { error: 'Type a name or an @jetcityit.com email address.' };
+  if (t.indexOf('@') !== -1) return { upn: t.toLowerCase() };
+  const lc = t.toLowerCase();
+  let hits = accessDirectory.filter(function(u){ return (u.name || '').toLowerCase() === lc; });
+  if (!hits.length) hits = accessDirectory.filter(function(u){ return (u.name || '').toLowerCase().indexOf(lc) !== -1; });
+  if (hits.length === 1) return { upn: hits[0].upn };
+  if (!hits.length) return { error: 'No one in the company directory matches "' + t + '". Try their full @jetcityit.com email address.' };
+  return { error: 'More than one person matches "' + t + '". Pick one from the list, or type their email address.' };
+}
+
+document.getElementById('access-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const input = document.getElementById('access-input');
+  const r = resolveAccessInput(input.value);
+  if (r.error) { accessMsg('err', r.error); return; }
+  const btn = document.getElementById('access-add-btn');
+  btn.disabled = true;
+  accessMsg('', '');
+  try {
+    const data = await apiFetch('/access', { method: 'POST', body: JSON.stringify({ upn: r.upn }) });
+    renderAccess(data);
+    input.value = '';
+    accessMsg('ok', data.added
+      ? r.upn + ' now has access. They get it the next time they open or reload the console.'
+      : r.upn + ' was already on the list.');
+    loadStaffOptions(); // so they appear in the assignee dropdowns straight away
+  } catch (err) {
+    accessMsg('err', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('access-list').addEventListener('click', async function(e){
+  const btn = e.target.closest('.acc-remove');
+  if (!btn) return;
+  const upn = btn.dataset.upn;
+  if (!confirm('Remove ' + upn + "'s access to the Help Desk console?\n\nThey lose access the next time they open or reload it. Tickets assigned to them stay assigned.")) return;
+  btn.disabled = true;
+  accessMsg('', '');
+  try {
+    renderAccess(await apiFetch('/access/' + encodeURIComponent(upn), { method: 'DELETE' }));
+    accessMsg('ok', upn + ' no longer has access.');
+    loadStaffOptions();
+  } catch (err) {
+    accessMsg('err', err.message);
     btn.disabled = false;
   }
 });

@@ -5,13 +5,14 @@
 | Capability | Who |
 |---|---|
 | **Submit** a ticket (`POST /api/tickets`) | Anyone — no sign-in. Rate-limited by IP (5/min) plus a honeypot field. |
-| **View / list / update tickets, reply (staff console)** | Only accounts on the `STAFF_UPNS` allowlist |
+| **View / list / update tickets, reply (staff console)** | Only accounts on the staff allowlist: `STAFF_UPNS` **plus** anyone added on the console's Access tab (see below) |
+| **Manage who is staff (Access tab)** | Only people who are staff through `STAFF_UPNS` (Azure) — optionally narrowed by `ACCESS_ADMIN_UPNS` |
 | **View / reply to own tickets (client tracking page)** | Anyone holding a valid per-email access token — see below |
 
-There is no intermediate "read-only staff" tier — being on `STAFF_UPNS` is the
-entire access boundary for everything under `/api/tickets*` besides ticket
-creation. Enforcement is server-side (in the Functions); the frontend hiding
-the console for non-staff is a convenience, not the security boundary.
+There is no intermediate "read-only staff" tier — being on the staff allowlist
+is the entire access boundary for everything under `/api/tickets*` besides
+ticket creation. Enforcement is server-side (in the Functions); the frontend
+hiding the console for non-staff is a convenience, not the security boundary.
 
 ## Who is "staff"?
 
@@ -23,8 +24,57 @@ UPN (email). No app-registration change needed to add or remove someone.
 STAFF_UPNS = dylanm@jetcityit.com,ericy@jetcityit.com,alex@jetcityit.com,simone@jetcityit.com
 ```
 
-To add or remove staff: Static Web App (`jetcityit-helpdesk`) → **Configuration**
-→ edit `STAFF_UPNS` → Save. Takes effect on the next request, no redeploy.
+To add or remove staff in Azure: Static Web App (`jetcityit-helpdesk`) →
+**Environment variables** → edit `STAFF_UPNS` → Apply. Takes effect on the next
+request, no redeploy.
+
+### Access tab (adding staff from the console)
+
+Staff who are set in Azure can also add and remove people from the console's
+**Access** tab (`staff.html`, `api/src/functions/access.js`,
+`api/src/lib/staffAccess.js`) instead of editing the Azure setting. **The site
+never writes Azure settings** (that would need an Azure role granted to the
+Function app, a much bigger privilege than this feature warrants); it keeps its
+own list and merges the two at sign-in, same model as the crew site's Access tab:
+
+- **Where the list lives.** One row per person under a reserved `ACCESS`
+  partition of the `Tickets` table (`kind: 'access'`, RowKey = lowercased UPN,
+  never `'0'`). Like `CLIENT`/`CONFIG`/`RECURRING`, it never appears in
+  `ticketsList` (`kind==='meta'` only) and every ticket route refuses a
+  partition with no real meta row.
+- **Effective staff = `STAFF_UPNS` ∪ the page-added list.** `requireStaff`
+  accepts either; `getStaffUpns()` (the merged list) is what the assignee
+  dropdown and its validation (`tickets.js`, `recurring.js`), round-robin
+  auto-assignment (`ticketCreation.js`) and the staff broadcast emails use, so
+  an added person is a full team member, not just someone who can sign in.
+  Removing someone on the page never removes anyone still in `STAFF_UPNS`; those
+  rows show a locked "Azure" badge and the API refuses to remove them.
+- **Who can manage it.** Only people who are staff through **Azure**
+  (`isAccessAdmin` in `requireStaff`, enforced by `requireAccessAdmin` on every
+  `/api/access*` route). Someone added from the page can use the console but can
+  **never** add or remove anyone, so access can't be passed along from a
+  granted account. Optional `ACCESS_ADMIN_UPNS` (comma-separated) narrows it
+  further to the people listed (who must also be in `STAFF_UPNS`); unset means
+  every Azure staff member, matching how the crew site behaves.
+- **What may be added.** Only `@jetcityit.com` addresses, and only a person
+  who **exists and is enabled in the company directory right now** (Graph
+  `GET /users/{upn}`, the already-consented `User.Read.All`): granting an
+  address that doesn't exist yet would hand it to whoever is later issued it.
+  The directory's canonical sign-in name, not what was typed, is what's stored
+  and later matched against the token's `preferred_username`. If the directory
+  can't be reached the add is refused (503), never allowed unchecked.
+- **Freshness.** The page-added list is cached per server instance for 30 s
+  (shared in-flight read, 2.5 s timeout, last good copy kept up to 10 minutes if
+  reads fail), so a change reaches every instance within ~30 s. If the list
+  can't be read and nothing is cached, someone who isn't in Azure's list gets a
+  503 "try again" rather than a 403 that would tell a genuinely-added person
+  they have no access; Azure-listed people never depend on that read.
+- **Audit.** `access.add` / `access.remove` (actor + target UPN only) are
+  logged, and only when something really changed. Each added person also shows
+  who added them and when on the tab.
+- **Not covered:** the page can't reach Azure itself, so it can't remove an
+  Azure-listed person, and it adds nobody to the Azure setting. Removing an
+  added person doesn't unassign tickets already assigned to them.
 
 ## Sign-in
 

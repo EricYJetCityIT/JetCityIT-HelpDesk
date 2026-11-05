@@ -1,5 +1,6 @@
 const { app } = require('@azure/functions');
-const { requireStaff, AuthError, authErrorResponse, STAFF_UPNS } = require('../lib/auth');
+const { requireStaff, AuthError, authErrorResponse } = require('../lib/auth');
+const { getStaffUpns } = require('../lib/staffAccess');
 const { getClient, ensureTable, genMessageRowKey, genMessageRowKeyAt, TICKET_CATEGORIES, recordActivity } = require('../lib/tables');
 const { audit } = require('../lib/audit');
 const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
@@ -197,10 +198,11 @@ app.http('ticketUpdate', {
       }
       if (body.assignee !== undefined) {
         const assignee = String(body.assignee || '').trim().toLowerCase();
-        // The dropdown only ever offers STAFF_UPNS entries (or blank for
-        // unassigned) -- this rejects anything else rather than silently
-        // storing it, since assignee is also used as an email address below.
-        if (assignee && !STAFF_UPNS.includes(assignee)) throw new AuthError(400, 'Invalid assignee');
+        // The dropdown only ever offers staff (the Azure list plus anyone added
+        // on the Access tab), or blank for unassigned -- this rejects anything
+        // else rather than silently storing it, since assignee is also used as
+        // an email address below.
+        if (assignee && !(await getStaffUpns()).includes(assignee)) throw new AuthError(400, 'Invalid assignee');
         update.assignee = assignee;
       }
       // assetId is validated against the separate Assets table (not this

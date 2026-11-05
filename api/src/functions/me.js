@@ -11,7 +11,7 @@ app.http('me', {
   handler: async (request, context) => {
     try {
       const user = await requireStaff(request);
-      return { jsonBody: { upn: user.upn, name: user.name, isStaff: true } };
+      return { jsonBody: { upn: user.upn, name: user.name, isStaff: true, isAccessAdmin: Boolean(user.isAccessAdmin) } };
     } catch (e) {
       if (e.status === 403) return { jsonBody: { isStaff: false } };
       return authErrorResponse(e, context);

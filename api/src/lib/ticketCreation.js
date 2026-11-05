@@ -5,7 +5,7 @@ const { sendMail, SUPPORT_MAILBOX } = require('./graph');
 const { escapeHtml } = require('./html');
 const { getOrCreateClientToken, buildTrackingLink } = require('./clientAccess');
 const { storeAttachments, deleteAttachments, AttachmentError } = require('./attachments');
-const { STAFF_UPNS } = require('./auth');
+const { getStaffUpns } = require('./staffAccess');
 const { notifyStaffTeam } = require('./staffBroadcast');
 
 // Shared by the public ticket-submission form (ticketsPublic.js) and any
@@ -37,7 +37,9 @@ function buildStaffTicketLink(ticketId) {
 // blip at this volume, not a correctness issue, so no optimistic-
 // concurrency retry loop here.
 async function pickNextAssignee(table) {
-  if (!STAFF_UPNS.length) return '';
+  // The whole staff team: the Azure list plus anyone added on the Access tab.
+  const staff = await getStaffUpns();
+  if (!staff.length) return '';
   let nextIndex = 0;
   try {
     const row = await table.getEntity('CONFIG', 'roundRobin');
@@ -45,7 +47,7 @@ async function pickNextAssignee(table) {
   } catch (e) {
     if (e.statusCode !== 404) throw e;
   }
-  const assignee = STAFF_UPNS[nextIndex % STAFF_UPNS.length];
+  const assignee = staff[nextIndex % staff.length];
   await table.upsertEntity({ partitionKey: 'CONFIG', rowKey: 'roundRobin', kind: 'config', nextIndex: nextIndex + 1 }, 'Merge');
   return assignee;
 }

@@ -47,11 +47,13 @@ const STALE_CLOSED_DAYS = 30;
 // imported" note instead. Without a bound, one persistent outage would stall
 // the cursor -- and every text-only reply behind it -- indefinitely.
 const ATTACHMENT_RETRY_WINDOW_MS = 30 * 60 * 1000;
-// Stop STARTING new messages once a poll has run this long. A backlog (after
-// an outage) of emails with pictures could otherwise outlast the HTTP
-// invocation limit mid-message; the unprocessed rest just waits for the next
-// poll, since the cursor only moves past what was actually handled.
-const POLL_TIME_BUDGET_MS = 150 * 1000;
+// Stop STARTING new messages once a poll has run this long. Azure Static Web
+// Apps cuts an API request off at 45 seconds (its documented limit), and one
+// message with pictures can itself take several seconds (attachment list,
+// downloads, uploads, writes, two emails), so a backlog (after an outage)
+// must not keep a poll going past that. The unprocessed rest just waits for
+// the next poll, since the cursor only moves past what was actually handled.
+const POLL_TIME_BUDGET_MS = 25 * 1000;
 
 // Checks the shared helpdesk@ mailbox's Inbox for new messages and threads
 // matching ones into the relevant ticket as a client reply -- lets a
@@ -103,6 +105,10 @@ app.http('emailIngestCheck', {
         // don't compare correctly as plain strings.
         let safeCursor = cursor;
         let processedCount = 0;
+        // Handled-but-failed work, reported to the heartbeat (lib/tickLease.js): a message that keeps
+        // failing holds the cursor, so everything behind it waits -- the console must not say "OK".
+        let problems = 0;
+        let problem = '';
         const deadline = Date.now() + POLL_TIME_BUDGET_MS;
 
         for (const msg of messages) {
@@ -120,6 +126,8 @@ app.http('emailIngestCheck', {
               // Can't tell whether this was already handled -- stop rather
               // than risk either skipping or duplicating it.
               context.log('EMAIL_INGEST_DEDUP_CHECK_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+              problems++;
+              problem = 'could not check the mailbox bookkeeping; waiting emails are held (see logs)';
               break;
             }
           }
@@ -132,6 +140,8 @@ app.http('emailIngestCheck', {
               // onward gets retried on the next poll, since the cursor never
               // advances past it.
               context.log('EMAIL_INGEST_MESSAGE_FAILED ' + JSON.stringify({ messageId: msg.id, error: e.message }));
+              problems++;
+              problem = 'an emailed reply could not be processed; later emails are held behind it (see logs)';
               break;
             }
             try {
@@ -154,7 +164,7 @@ app.http('emailIngestCheck', {
 
         await table.upsertEntity({ partitionKey: CONFIG_PARTITION, rowKey: CURSOR_ROW, kind: 'config', since: safeCursor }, 'Merge');
         if (processedCount) context.log('EMAIL_INGEST_PROCESSED ' + JSON.stringify({ count: processedCount }));
-        return { ok: true, processedCount };
+        return { ok: true, processedCount, problems, problem };
       });
       if (run.skipped) return { jsonBody: { ok: true, skipped: true } };
       return { jsonBody: run.result };

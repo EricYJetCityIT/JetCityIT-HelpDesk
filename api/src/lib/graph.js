@@ -181,7 +181,7 @@ async function getInboxMessagesSince(sinceIso) {
 
 // Bound on each attachment-related Graph call, so one stalled response can't
 // hang an entire email poll (a plain fetch has no timeout of its own).
-const GRAPH_ATTACHMENT_TIMEOUT_MS = 30000;
+const GRAPH_ATTACHMENT_TIMEOUT_MS = 15000;
 
 // An Error that carries the HTTP status (and Retry-After, if Graph sent one),
 // so a caller can tell a throttle/outage worth retrying from a permanent

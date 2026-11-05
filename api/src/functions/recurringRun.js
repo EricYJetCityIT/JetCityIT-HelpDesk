@@ -46,6 +46,7 @@ app.http('recurringTicketsRun', {
           if (Date.now() - last >= intervalMs) due.push(e);
         }
 
+        let failed = 0; // reported to the heartbeat (lib/tickLease.js), not swallowed into an "OK"
         for (const tmpl of due) {
           const ticketId = genTicketId();
           const now = new Date().toISOString();
@@ -104,6 +105,7 @@ app.http('recurringTicketsRun', {
                 advanced = true;
               } catch (e4) {
                 if (attempt === 2) {
+                  failed++;
                   context.log('RECURRING_LASTCREATEDAT_UPDATE_FAILED ' + JSON.stringify({ templateId: tmpl.rowKey, ticketId, error: e4.message }));
                 } else {
                   await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
@@ -111,12 +113,13 @@ app.http('recurringTicketsRun', {
               }
             }
           } catch (e3) {
+            failed++;
             context.log('RECURRING_CREATE_FAILED ' + JSON.stringify({ templateId: tmpl.rowKey, error: e3.message }));
           }
         }
 
         if (due.length) context.log('RECURRING_TICKETS_CREATED ' + JSON.stringify({ count: due.length }));
-        return { ok: true, created: due.length };
+        return { ok: true, created: due.length, problems: failed, problem: failed ? failed + ' recurring ticket(s) could not be created (see logs)' : '' };
       });
       if (run.skipped) return { jsonBody: { ok: true, skipped: true } };
       return { jsonBody: run.result };

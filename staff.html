@@ -502,7 +502,7 @@ a.sheet-chip:hover{background:var(--border)}
       <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Organization Portal</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <button class="recurring-nav-btn" id="access-nav-btn" type="button" style="display:none">🔑 Access</button>
-      <button type="button" class="jobs-pill" id="jobs-pill" style="display:none" aria-label="Background jobs status"></button>
+      <button type="button" class="jobs-pill" id="jobs-pill" style="display:none"></button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
         <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
@@ -913,7 +913,7 @@ a.sheet-chip:hover{background:var(--border)}
         <div id="chart-assignee"></div>
       </div>
       <div class="chart-card">
-        <h2 title="Based on tickets flagged by the SLA-escalation check, which runs every 15 minutes and skips a ticket once it's answered -- a breach answered just before the next check runs may not be counted.">SLA breach rate by priority</h2>
+        <h2 title="Based on tickets flagged by the SLA-escalation check, which runs every few minutes and skips a ticket once it's answered -- a breach answered just before the next check runs may not be counted.">SLA breach rate by priority</h2>
         <div id="chart-sla"></div>
       </div>
       <div class="chart-card">
@@ -1141,36 +1141,56 @@ function jobsAgeText(min){
   if (min < 1440) return Math.round(min / 60) + ' h ago';
   return Math.round(min / 1440) + ' d ago';
 }
+function stopJobsStatusPolling(){
+  if (jobsStatusTimer) { clearInterval(jobsStatusTimer); jobsStatusTimer = null; }
+}
+// Deliberately NOT apiFetch: that one, when the sign-in has lapsed, redirects the whole page to Microsoft
+// (or pops a confirm() about unsaved drafts). Fine after a click; not something a background timer may
+// do to someone who walked away with a half-written reply open. This only ever asks for a token
+// SILENTLY, and if that isn't possible it quietly gives up until the next page load.
 async function loadJobsStatus(){
   const pill = document.getElementById('jobs-pill');
+  if (document.hidden && pill.style.display !== 'none') return; // nobody is looking at this tab
   try {
-    const data = await apiFetch('/jobs-status');
+    const token = await getApiToken();
+    const res = await fetch('/api/jobs-status', { headers: { 'X-Jetcity-Authorization': 'Bearer ' + token } });
+    if (!res.ok) throw new Error('jobs-status ' + res.status);
+    const data = await res.json();
     const now = Date.parse(data.now) || Date.now();
     const lines = [];
     const failing = [];
+    const attention = [];
     let worst = 0, never = false, unknown = false;
     (data.jobs || []).forEach(function(j){
       if (j.unknown) { unknown = true; lines.push(j.label + ': status unavailable'); return; }
-      const ran = Date.parse(j.lastFinishedAt || j.lastStartedAt || '');
-      if (!ran) { never = true; lines.push(j.label + ': has not run yet'); return; }
+      // Only a FINISHED run counts as the job having run: a job that keeps starting but never
+      // finishes (killed, or hung) must not look fresh just because its start time is recent.
+      const ran = Date.parse(j.lastFinishedAt || '');
+      if (!ran) { never = true; lines.push(j.label + ': has not finished a run yet'); return; }
       const age = Math.max(0, Math.round((now - ran) / 60000));
       worst = Math.max(worst, age);
       if (j.lastResult === 'error') failing.push(j.label);
-      lines.push(j.label + ': ' + jobsAgeText(age) + (j.lastResult === 'error' ? ' (failed: ' + (j.lastError || 'error') + ')' : ''));
+      else if (j.lastResult === 'warn') attention.push(j.label);
+      lines.push(j.label + ': ' + jobsAgeText(age) +
+        (j.lastResult === 'error' ? ' (failed: ' + (j.lastError || 'error') + ')' :
+         j.lastResult === 'warn' ? ' (needs attention: ' + (j.lastError || 'some items failed') + ')' : ''));
     });
     let state = 'ok';
     let text = 'Jobs OK · ' + jobsAgeText(worst);
     if (failing.length) { state = 'bad'; text = 'Jobs failing · ' + failing.join(', '); }
+    else if (attention.length) { state = 'warn'; text = 'Jobs need attention · ' + attention.join(', '); }
     else if (never) { state = 'warn'; text = 'Jobs · not run yet'; }
     else if (worst > JOBS_STALE_MIN) { state = 'warn'; text = 'Jobs delayed · last ran ' + jobsAgeText(worst); }
     else if (unknown) { state = 'warn'; text = 'Jobs · status unavailable'; }
     pill.className = 'jobs-pill' + (state === 'ok' ? '' : ' ' + state);
-    pill.textContent = text;
+    pill.textContent = text; // the visible text is the button's accessible name, so it must not be overridden by an aria-label
     pill.title = 'Background jobs (meant to run every ~5 minutes):\n' + lines.join('\n') + '\n\nClick for details.';
     pill.dataset.details = lines.join('\n');
     pill.style.display = '';
   } catch (e) {
     pill.style.display = 'none'; // an indicator is never worth an error message of its own
+    // A lapsed sign-in can't be renewed without the user, and a timer must never ask: stop polling.
+    if (typeof msal !== 'undefined' && e instanceof msal.InteractionRequiredAuthError) stopJobsStatusPolling();
   }
 }
 document.getElementById('jobs-pill').addEventListener('click', function(){
@@ -1585,7 +1605,7 @@ function renderAnalytics(){
     // escalatedAt is set once by the SLA-escalation job the first (and only)
     // time a ticket breaches its response-time target -- already tracked per
     // ticket, just never surfaced anywhere in the UI until now. The job polls
-    // every 15 minutes and skips a ticket once it's answered, so a breach
+    // every few minutes and skips a ticket once it's answered, so a breach
     // answered just before the next tick can go uncounted -- a known
     // undercount, documented on the chart below rather than fixed here.
     const breachRate = scoped.length ? Math.round(scoped.filter(function(t){ return t.escalatedAt; }).length / scoped.length * 100) : null;
@@ -1601,7 +1621,7 @@ function renderAnalytics(){
       chip('resolved', csat != null ? csat + '%' : '—', csat != null ? deltaBadge(csat, prevCsat, 'up', true) : '', 'Satisfaction (' + csatNow.rated + ' rated)') +
       chip('response', avgResponse != null ? formatMinutes(Math.round(avgResponse)) : '—', avgResponse != null ? deltaBadge(avgResponse, prevAvgResponse, 'down') : '', 'Avg first response (' + respondedCount + ' responded)') +
       chip('resolution', avgResolution != null ? formatMinutes(Math.round(avgResolution)) : '—', avgResolution != null ? deltaBadge(avgResolution, prevAvgResolution, 'down') : '', 'Avg resolution (' + resolvedForAvgCount + ' resolved)') +
-      chip('pending', breachRate != null ? breachRate + '%' : '—', breachRate != null ? deltaBadge(breachRate, prevBreachRate, 'down', true) : '', 'SLA breach rate', 'Based on tickets flagged by the SLA-escalation check, which may undercount breaches resolved just before its next 15-minute check.');
+      chip('pending', breachRate != null ? breachRate + '%' : '—', breachRate != null ? deltaBadge(breachRate, prevBreachRate, 'down', true) : '', 'SLA breach rate', 'Based on tickets flagged by the SLA-escalation check, which may undercount breaches resolved just before its next check.');
   } catch (err) {
     console.error('Analytics stats row failed to render', err);
     document.getElementById('analytics-stats-bar').innerHTML = '';

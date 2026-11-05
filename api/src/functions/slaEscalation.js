@@ -11,6 +11,12 @@ const { withTickLease } = require('../lib/tickLease');
 // keep both in sync if this policy changes.
 const SLA_MINUTES = { High: 120, Normal: 480, Low: 1440 };
 
+// Most escalations handled in one run. Each is a mail send plus two writes, run one after another, and
+// Azure Static Web Apps cuts an API request off at 45 seconds -- a backlog (after an outage, or a Graph
+// problem that left many tickets overdue) must not push a run past that. The rest are picked up on the
+// next tick: a ticket is only ever skipped once escalatedAt is set.
+const SLA_MAX_PER_TICK = 20;
+
 // Same helper as tickets.js/ticketsPublic.js -- kept as its own one-line
 // copy rather than a shared export.
 function buildStaffTicketLink(ticketId) {
@@ -50,7 +56,12 @@ app.http('slaEscalationCheck', {
           if (elapsedMin >= slaMin) candidates.push(e);
         }
 
-        for (const meta of candidates) {
+        const batch = candidates.slice(0, SLA_MAX_PER_TICK);
+        if (candidates.length > batch.length) {
+          context.log('SLA_ESCALATION_BACKLOG ' + JSON.stringify({ now: batch.length, remaining: candidates.length - batch.length }));
+        }
+        let emailFailures = 0;
+        for (const meta of batch) {
           const ticketId = meta.partitionKey;
           const to = meta.assignee || SUPPORT_MAILBOX;
           try {
@@ -59,6 +70,7 @@ app.http('slaEscalationCheck', {
   <p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`;
             await sendMail({ from: SUPPORT_MAILBOX, to, subject: `SLA breach: ${meta.subject} [${ticketId}]`, html });
           } catch (e2) {
+            emailFailures++;
             context.log('SLA_ESCALATION_EMAIL_FAILED ' + JSON.stringify({ ticketId, error: e2.message }));
           }
           // Marked regardless of email success -- an escalation attempt that
@@ -68,8 +80,15 @@ app.http('slaEscalationCheck', {
           await recordActivity(table, ticketId, `SLA response-time target missed -- escalation sent to ${to}`);
         }
 
-        if (candidates.length) context.log('SLA_ESCALATIONS_SENT ' + JSON.stringify({ count: candidates.length }));
-        return { ok: true, escalated: candidates.length };
+        if (batch.length) context.log('SLA_ESCALATIONS_SENT ' + JSON.stringify({ count: batch.length }));
+        // Reported to the heartbeat (lib/tickLease.js) so the console shows amber instead of "OK" when
+        // the escalation emails themselves are failing -- the tickets are still marked escalated.
+        return {
+          ok: true,
+          escalated: batch.length,
+          problems: emailFailures,
+          problem: emailFailures ? emailFailures + ' escalation email(s) could not be sent' : '',
+        };
       });
       if (run.skipped) return { jsonBody: { ok: true, skipped: true } };
       return { jsonBody: run.result };

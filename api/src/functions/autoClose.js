@@ -9,9 +9,9 @@ const AUTO_CLOSE_DAYS = 3;
 // Upper bound per run. The first run after deploy closes every historical
 // Resolved ticket older than AUTO_CLOSE_DAYS at once, and this loop is
 // serial with a few round trips per ticket -- an unbounded backlog could
-// outlast the function's time limit mid-loop. The rest simply close on the
-// next 5-minute tick.
-const MAX_PER_TICK = 50;
+// outlast the platform's 45-second API request limit mid-loop. The rest
+// simply close on the next tick (about 5 minutes later).
+const MAX_PER_TICK = 30;
 
 // Closes tickets that have been Resolved for AUTO_CLOSE_DAYS. A client who
 // replies to a Resolved ticket reopens it (clientTicketReply / orgTicketReply
@@ -66,6 +66,7 @@ app.http('autoCloseCheck', {
         }
 
         let closed = 0;
+        let failed = 0; // reported to the heartbeat (lib/tickLease.js), not swallowed into an "OK"
         let warnedNoEtag = false;
         for (const meta of batch) {
           const ticketId = meta.partitionKey;
@@ -90,6 +91,7 @@ app.http('autoCloseCheck', {
             // deleted the ticket mid-run. Both mean "nothing to close" -- only
             // anything else is a real failure worth a log line.
             if (e.statusCode !== 412 && e.statusCode !== 404) {
+              failed++;
               context.log('AUTO_CLOSE_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
             }
             continue;
@@ -100,7 +102,7 @@ app.http('autoCloseCheck', {
         }
 
         if (closed) context.log('AUTO_CLOSED ' + JSON.stringify({ count: closed }));
-        return { ok: true, closed };
+        return { ok: true, closed, problems: failed, problem: failed ? failed + ' ticket(s) could not be closed (see logs)' : '' };
       });
       if (run.skipped) return { jsonBody: { ok: true, skipped: true } };
       return { jsonBody: run.result };

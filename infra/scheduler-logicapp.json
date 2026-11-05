@@ -8,28 +8,45 @@
     "logicAppName": {
       "type": "string",
       "defaultValue": "jetcityit-helpdesk-scheduler",
-      "metadata": { "description": "Name of the Logic App to create." }
+      "metadata": {
+        "description": "Name of the Logic App to create."
+      }
     },
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]",
-      "metadata": { "description": "Azure region. Defaults to the resource group's." }
+      "metadata": {
+        "description": "Azure region. Defaults to the resource group's."
+      }
     },
     "siteUrl": {
       "type": "string",
       "defaultValue": "https://helpdesk.jetcityit.com",
-      "metadata": { "description": "The Help Desk's address, with no trailing slash." }
+      "metadata": {
+        "description": "The Help Desk's address, with no trailing slash."
+      }
     },
     "intervalMinutes": {
       "type": "int",
       "defaultValue": 5,
       "minValue": 1,
       "maxValue": 60,
-      "metadata": { "description": "How often the jobs are called. 5 is what the code expects; going lower costs more for no benefit." }
+      "metadata": {
+        "description": "How often the jobs are called. 5 is what the code expects; going lower costs more for no benefit."
+      }
     },
     "cronSecret": {
       "type": "securestring",
-      "metadata": { "description": "The SAME value as the INTERNAL_CRON_SECRET setting on the jetcityit-helpdesk Static Web App (Environment variables). Stored as a secure parameter: it is not shown in the portal, the deployment history or the run history." }
+      "metadata": {
+        "description": "The SAME value as the INTERNAL_CRON_SECRET setting on the jetcityit-helpdesk Static Web App (Environment variables). Stored as a secure parameter: it is not shown in the portal, the deployment history or the run history."
+      }
+    },
+    "alertEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "RECOMMENDED. An email address to alert when the scheduler's runs fail (for example a wrong or rotated secret, or the site being down). Leave blank for no alert. Costs about $0.10 a month."
+      }
     }
   },
   "resources": [
@@ -44,8 +61,13 @@
           "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
           "contentVersion": "1.0.0.0",
           "parameters": {
-            "siteUrl": { "type": "string", "defaultValue": "" },
-            "cronSecret": { "type": "securestring" }
+            "siteUrl": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "cronSecret": {
+              "type": "securestring"
+            }
           },
           "triggers": {
             "Every_few_minutes": {
@@ -63,10 +85,20 @@
               "inputs": {
                 "method": "POST",
                 "uri": "@{concat(parameters('siteUrl'), '/api/internal/email-ingest-tick')}",
-                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
-                "retryPolicy": { "type": "none" }
+                "headers": {
+                  "X-Cron-Secret": "@parameters('cronSecret')"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
               },
-              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+              "runtimeConfiguration": {
+                "secureData": {
+                  "properties": [
+                    "inputs"
+                  ]
+                }
+              }
             },
             "SLA_escalation": {
               "type": "Http",
@@ -74,10 +106,20 @@
               "inputs": {
                 "method": "POST",
                 "uri": "@{concat(parameters('siteUrl'), '/api/internal/sla-escalation-tick')}",
-                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
-                "retryPolicy": { "type": "none" }
+                "headers": {
+                  "X-Cron-Secret": "@parameters('cronSecret')"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
               },
-              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+              "runtimeConfiguration": {
+                "secureData": {
+                  "properties": [
+                    "inputs"
+                  ]
+                }
+              }
             },
             "Recurring_tickets": {
               "type": "Http",
@@ -85,10 +127,20 @@
               "inputs": {
                 "method": "POST",
                 "uri": "@{concat(parameters('siteUrl'), '/api/internal/recurring-tickets-tick')}",
-                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
-                "retryPolicy": { "type": "none" }
+                "headers": {
+                  "X-Cron-Secret": "@parameters('cronSecret')"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
               },
-              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+              "runtimeConfiguration": {
+                "secureData": {
+                  "properties": [
+                    "inputs"
+                  ]
+                }
+              }
             },
             "Auto_close": {
               "type": "Http",
@@ -96,19 +148,96 @@
               "inputs": {
                 "method": "POST",
                 "uri": "@{concat(parameters('siteUrl'), '/api/internal/auto-close-tick')}",
-                "headers": { "X-Cron-Secret": "@parameters('cronSecret')" },
-                "retryPolicy": { "type": "none" }
+                "headers": {
+                  "X-Cron-Secret": "@parameters('cronSecret')"
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
               },
-              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } }
+              "runtimeConfiguration": {
+                "secureData": {
+                  "properties": [
+                    "inputs"
+                  ]
+                }
+              }
             }
           },
           "outputs": {}
         },
         "parameters": {
-          "siteUrl": { "value": "[parameters('siteUrl')]" },
-          "cronSecret": { "value": "[parameters('cronSecret')]" }
+          "siteUrl": {
+            "value": "[parameters('siteUrl')]"
+          },
+          "cronSecret": {
+            "value": "[parameters('cronSecret')]"
+          }
         }
       }
+    },
+    {
+      "condition": "[not(empty(parameters('alertEmail')))]",
+      "type": "Microsoft.Insights/actionGroups",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('actionGroupName')]",
+      "location": "Global",
+      "properties": {
+        "groupShortName": "HDScheduler",
+        "enabled": true,
+        "emailReceivers": [
+          {
+            "name": "Help Desk scheduler alert",
+            "emailAddress": "[parameters('alertEmail')]",
+            "useCommonAlertSchema": true
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[not(empty(parameters('alertEmail')))]",
+      "type": "Microsoft.Insights/metricAlerts",
+      "apiVersion": "2018-03-01",
+      "name": "[variables('alertRuleName')]",
+      "location": "global",
+      "dependsOn": [
+        "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]",
+        "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+      ],
+      "properties": {
+        "description": "The Help Desk scheduler Logic App had failed runs (3 or more in 15 minutes). Usually the cron secret does not match INTERNAL_CRON_SECRET, or the site is down. The staff console Jobs indicator shows which jobs last ran.",
+        "severity": 2,
+        "enabled": true,
+        "scopes": [
+          "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]"
+        ],
+        "evaluationFrequency": "PT5M",
+        "windowSize": "PT15M",
+        "criteria": {
+          "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+          "allOf": [
+            {
+              "name": "RunsFailed",
+              "metricName": "RunsFailed",
+              "metricNamespace": "Microsoft.Logic/workflows",
+              "operator": "GreaterThanOrEqual",
+              "threshold": 3,
+              "timeAggregation": "Total",
+              "criterionType": "StaticThresholdCriterion"
+            }
+          ]
+        },
+        "autoMitigate": true,
+        "actions": [
+          {
+            "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+          }
+        ]
+      }
     }
-  ]
+  ],
+  "variables": {
+    "actionGroupName": "[concat(parameters('logicAppName'), '-alerts')]",
+    "alertRuleName": "[concat(parameters('logicAppName'), '-runs-failing')]"
+  }
 }

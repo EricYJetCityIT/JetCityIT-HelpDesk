@@ -17,7 +17,11 @@ const { getClient, ensureTable } = require('./tables');
 //     shows. The scheduler is outside this app, and the previous one (GitHub's cron) ran these jobs
 //     only every few hours with nothing anywhere saying so; this makes "is it running?" visible.
 const PARTITION = 'CONFIG';
-const LEASE_MS = 5 * 60 * 1000; // longer than any one run (the request itself is cut off by the gateway at ~4 min)
+// Longer than any one run. Azure Static Web Apps cuts an API REQUEST off at 45 seconds (its documented limit
+// for every API backend), but the function itself may keep working after the caller has given up, so the
+// lease has to outlast the work, not the request. The jobs are written to finish well inside this (the
+// email poll stops starting new messages after ~25 s; the SLA and auto-close loops are capped per tick).
+const LEASE_MS = 5 * 60 * 1000;
 
 const JOBS = {
   'email-ingest': 'Email replies',
@@ -32,6 +36,12 @@ const iso = (ms) => new Date(ms).toISOString();
 // Runs `fn` only if no other caller holds this job's lease. Resolves { skipped: true } when another
 // run is in progress, or { skipped: false, result } with whatever `fn` returned. Errors from `fn`
 // are recorded in the heartbeat and then re-thrown, so the endpoint answers exactly as before.
+//
+// The heartbeat has three outcomes, not two. A job that THROWS is 'error'. But these jobs deliberately
+// swallow most per-item failures so one bad ticket/email can't take the whole run down (an SLA email that
+// can't be sent, one emailed reply that keeps failing and holds the cursor), and a heartbeat that only knew
+// about throws would show "OK" while the mailbox is stuck. So a job reports those by returning
+// `{ ..., problems: <count>, problem: '<short, non-sensitive text>' }`, recorded here as 'warn'.
 // Failing to read or write the lease row itself throws (the job doesn't run): better to miss one
 // tick than to run it unprotected.
 async function withTickLease(job, context, fn) {
@@ -74,6 +84,7 @@ async function withTickLease(job, context, fn) {
 
   // Release + heartbeat. Only if the lease is still ours: if this run overran LEASE_MS and another
   // caller took over, their row must not be cleared. Never throws -- the job's own outcome matters more.
+  const hadProblems = !failure && result && Number(result.problems) > 0;
   try {
     const row = await table.getEntity(PARTITION, rowKey);
     if (row.holder === holder) {
@@ -82,8 +93,10 @@ async function withTickLease(job, context, fn) {
         rowKey,
         leaseUntil: '',
         lastFinishedAt: iso(Date.now()),
-        lastResult: failure ? 'error' : 'ok',
-        lastError: failure ? String((failure && failure.message) || failure).slice(0, 200) : '',
+        lastResult: failure ? 'error' : hadProblems ? 'warn' : 'ok',
+        lastError: failure
+          ? String((failure && failure.message) || failure).slice(0, 200)
+          : hadProblems ? String(result.problem || result.problems + ' item(s) failed').slice(0, 200) : '',
       }, 'Merge');
     }
   } catch (e) {

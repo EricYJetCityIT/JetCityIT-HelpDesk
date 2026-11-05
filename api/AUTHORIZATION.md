@@ -634,9 +634,23 @@ that arrangement safe and observable regardless of who calls:
   unprotected.
 - **A heartbeat** in the same row (`lastStartedAt`, `lastFinishedAt`,
   `lastResult`, `lastError`), shown by `GET /api/jobs-status` as the staff
-  console's "Jobs" indicator: green when every job ran in the last 30 minutes,
-  amber when one is delayed or has never run, red when one failed. It is
-  read-only and carries no ticket data, so any staff member may read it.
+  console's "Jobs" indicator: green when every job finished a run in the last
+  30 minutes, amber when one is delayed, has never finished a run, or last
+  reported problems, red when one threw an error. `lastResult` is `ok`,
+  `warn` or `error`: these jobs deliberately swallow per-item failures (one
+  SLA email that can't be sent, one emailed reply that keeps failing and holds
+  the cursor), so a job reports those by returning `problems`/`problem`,
+  recorded as `warn` -- otherwise the indicator would say "OK" while the
+  mailbox is stuck. Only a *finished* run counts as the job having run, so a
+  job that keeps starting and never finishing can't look fresh. The console
+  polls it every 5 minutes with a silent token request only (never the
+  redirect-to-sign-in path), and stops polling if the sign-in has lapsed. It
+  is read-only and carries no ticket data, so any staff member may read it.
+- **Alerting.** The indicator only helps while someone has the console open, so
+  the Logic App template can also create an Azure Monitor alert that emails when
+  its runs fail (a wrong secret makes every run fail with 401, and writes no
+  heartbeat at all because the secret is checked first). It is optional: see
+  `infra/README.md`.
 
 Nobody is signed in when a schedule fires, so these can't use
 `requireStaff`'s JWT flow — and the routes can't be left open either,
@@ -687,8 +701,9 @@ fourth tick on the same schedule and secret: any ticket that has been
   `AUTO_CLOSE_FAILED`. If the SDK ever stops returning `etag` on listed
   entities the write silently becomes unconditional, so one
   `AUTO_CLOSE_NO_ETAG` line is logged per run as a trace.
-- **Backlog cap.** At most 50 tickets (`MAX_PER_TICK`) close per run; the
-  rest follow on later 5-minute ticks (`AUTO_CLOSE_BACKLOG` is logged when
+- **Backlog cap.** At most 30 tickets (`MAX_PER_TICK`) close per run (an API
+  request is cut off at 45 seconds, see the scheduler section); the
+  rest follow on later ticks (`AUTO_CLOSE_BACKLOG` is logged when
   anything is deferred). The first run after deploy therefore closes every
   historical `Resolved` ticket already older than 3 days (not a 👎).
 
@@ -700,9 +715,9 @@ and an email reply arriving on a ticket more than 30 days past
 `resolvedAt` is logged but not reopened once it is `Closed` (the existing
 `emailIngest.js` stale-closed rule).
 
-Because the GitHub Actions workflow file defines the schedule, this
-endpoint does nothing until that file is deployed with the new step — and
-`INTERNAL_CRON_SECRET` is already set from the other three jobs.
+Like the other three jobs it only runs when something calls it: the Azure
+Logic App (`infra/`) every ~5 minutes, or the GitHub workflow's auto-close step
+as a slow backstop. `INTERNAL_CRON_SECRET` is shared by all four.
 
 ## Email-in replies
 
@@ -771,9 +786,16 @@ the email says.
   (`ATTACHMENT_RETRY_WINDOW_MS`) it goes through as text with a "not
   imported" note instead, so a long outage can't stall the cursor, and every
   text-only reply behind it, forever. Each attachment-related Graph call has
-  a 30 s timeout, and a poll stops *starting* new emails after 150 s
+  a 15 s timeout, and a poll stops *starting* new emails after 25 s
   (`POLL_TIME_BUDGET_MS`) -- the rest wait for the next poll, since the
-  cursor only moves past what was actually handled.
+  cursor only moves past what was actually handled. These numbers are sized
+  to Azure Static Web Apps' documented limit of **45 seconds per API
+  request** (for every API backend): the SLA escalation job is capped at 20
+  tickets per run (`SLA_MAX_PER_TICK`) and auto-close at 30 for the same
+  reason. A run that does go past 45 s is cut off for the *caller* (a Failed
+  action in the Logic App's run history, or a failed backstop step) while
+  the function may well finish; the lease (5 min) outlasts that, and the
+  Jobs indicator, not the caller's status, says whether the work happened.
 - *Only pictures count.* Whatever `storeAttachments` sniffs the bytes as, a
   result that isn't `image/*` (a file named `.png` that is really an Outlook
   `.eml`, which the portal forms accept on purpose) is deleted again and

@@ -179,7 +179,8 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .theme-option.active::after{content:'✓';margin-left:auto}
 
 @media(max-width:600px){
-  .hdr-right{order:3;flex-basis:100%;gap:8px}
+  .hdr-right{order:3;flex-basis:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .hdr-right .hdr-pill-link,.hdr-right .hdr-org-link{text-align:center;padding:6px 8px!important}
   .theme-switcher{order:2}
   .hdr{padding:10px 14px}
   .wrap{padding-left:14px;padding-right:14px}

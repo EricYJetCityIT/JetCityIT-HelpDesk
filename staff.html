@@ -154,10 +154,15 @@ button{font:inherit;cursor:pointer}
 h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
 .login-card h1{font-size:18px;margin-bottom:8px}
 .login-card p{color:var(--text2);font-size:13px;margin-bottom:22px;line-height:1.5}
-.ms-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:11px 16px;border:1px solid var(--border);border-radius:9px;background:var(--surface);font-weight:600;font-size:14px}
+/* color + font are set explicitly: a <button> doesn't inherit them, so on the dark theme the label was the browser's default
+   black on the dark card, close to unreadable. */
+.ms-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 16px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);font-family:inherit;font-weight:600;font-size:15px;cursor:pointer}
 .ms-btn:hover{background:var(--bg)}
 .ms-btn:disabled{opacity:.6}
 .login-err{color:var(--red);font-size:13px;margin-top:12px;display:none}
+/* Shown by app-shell.js on phones/tablets where the app isn't installed yet (so a tech who opened the emailed link can install it before signing in). */
+.login-install{margin-top:16px;padding:8px 12px;background:none;border:none;color:var(--text2);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.login-install:hover{color:var(--text)}
 
 /* ── Access denied ── */
 #denied-view{display:none;max-width:440px;margin:80px auto;text-align:center;padding:0 24px}
@@ -485,6 +490,7 @@ a.sheet-chip:hover{background:var(--border)}
       Sign in with Microsoft
     </button>
     <div class="login-err" id="ms-login-err"></div>
+    <button type="button" class="login-install" data-install-app style="display:none">📱 Get the app</button>
   </div>
 </div>
 

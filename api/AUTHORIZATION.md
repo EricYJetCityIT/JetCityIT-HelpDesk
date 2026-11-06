@@ -1328,7 +1328,84 @@ removed can't stay pinned in the cache forever. (A 5xx is an outage, so its save
   `token` and `ticket`, so it can't be used to send anyone elsewhere. A link wrapped by a mail filter
   (Microsoft Safe Links keeps the real link URL-encoded in `?url=`) is unwrapped once; what is inside
   must still be this site's `/track.html` with an email and a token.
-- Push notifications for both apps are the next piece and are not built yet.
+- Phone alerts (push notifications) for both apps: see the next section.
+
+## Phone alerts (push notifications)
+
+Both installed apps can alert the phone when something happens on a ticket, with the app closed. The
+button is "🔔 Turn on alerts" in each page's header (shown once someone is signed in, and only on a
+browser that can do push). Tapping it asks the phone for permission, registers the device, and sends a
+test alert straight away. **iPhone only allows alerts for an app that has been added to the Home Screen
+and opened from there**, and needs iOS 16.4 or later; in a normal Safari tab the button explains that
+instead. The permission prompt must come from a tap, so alerts are never switched on silently.
+
+**What is alerted** (each also still sends the email it always did):
+- *Staff devices:* a new ticket (everyone; an auto-assignee gets one "New ticket assigned to you" alert
+  instead of two), a ticket assigned to you in the console (not when you assign it to yourself), a
+  requester's reply (portal, organization portal or email), the assignee's reply (everyone else), an
+  SLA breach (the assignee, or the whole team if nobody has it or the assignee is no longer staff), and a
+  recurring ticket assigned to you. Same caps as the emails: the new-ticket alert rides the same
+  30-per-hour team flood cap.
+- *Client devices:* a staff reply, and a status change. **Not** the automatic Resolved→Closed (that is
+  deliberately silent, as the email is).
+
+**What an alert contains.** Only a title, the ticket's *subject* (clipped), the page to open and a tag,
+never message text, names or addresses. It passes through the phone vendor's push service (Google,
+Apple, Mozilla or Microsoft) end-to-end encrypted. The tag makes a newer alert about the same ticket
+replace the older one on the lock screen. A tap opens that ticket in the already-open app, or opens
+the app. The service worker (`sw.js`) checks the target again before opening it: only `/staff.html` and
+`/track.html` on this site, anything else opens the home page. The client link carries no credentials:
+the client app uses the sign-in already kept on that phone, and the server still shows a ticket only to
+the address it belongs to.
+
+**Storage and who can register.** One row per device in the Tickets table, `kind: 'push'` (never
+`'meta'`, so it is never a ticket), under a reserved partition per audience: `PUSH-STAFF` (written only
+via `requireStaff`) and `PUSH-CLIENT` (only with a valid email + tracking token). The RowKey is the
+SHA-256 of the push address, so a device belongs to **one person at a time**: if a phone is handed over
+and the new person turns alerts on, the row moves to them and the previous person stops receiving that
+phone's alerts. Caps per person: 8 staff devices, 4 client devices (the least recently seen is dropped).
+Registration routes (all `POST`, JSON, 8 KB cap, IP rate-limited): `/api/push/{subscribe,unsubscribe,test}`
+(staff) and `/api/client/push/{subscribe,unsubscribe,test}` (client), plus the public
+`GET /api/push/key` (the *public* half of the signing key, which a browser needs to subscribe).
+Unsubscribing only works for the device's owner; "test" sends to the caller's own devices only
+(5 per minute). An installed app re-sends its registration when it is opened (at most every 12 hours per
+person), which keeps the server's copy current and repairs a device whose address changed or that was
+registered under an older signing key. Opening the app **never** switches alerts back on for a device
+the person turned off.
+
+**Who actually receives an alert.** Staff alerts go only to people who are staff *at the moment of
+sending* (the Azure list plus the Access tab, `getStaffUpns()`), so someone removed from the Access tab
+stops being alerted immediately, whether or not their phone's row has been cleaned up. Removing a
+person on the Access tab also deletes their devices (unless Azure still lists them). Client alerts go to the
+devices registered under the ticket's own email. "Not you" on the client page switches that phone's
+alerts off (using the session being forgotten) before it forgets the person.
+
+**Request forgery protection.** This server POSTs to whatever address a device registered, so an address is
+accepted only if it is `https`, on the default port, without credentials or a fragment, and on a real push
+service: `fcm.googleapis.com`, `web.push.apple.com`, `updates.push.services.mozilla.com`,
+`*.push.services.mozilla.com`, `*.notify.windows.com`. The same check runs again at send time. The key
+material is validated too (a P-256 public key of 65 bytes and a 16-byte secret).
+
+**The signing key (VAPID).** Generated on first use and stored in one `CONFIG` row (`vapid`), so there
+is no secret to paste into Azure. The private half never leaves the server; only the public half is
+served. **Deleting that row invalidates every registered device**: the apps notice the changed key the
+next time they are opened and register again by themselves (people whose app stays closed get no alerts
+until they open it). Do not delete it casually.
+
+**Delivery limits.** Alerts are sent from inside the request that caused them, and Azure Static Web Apps
+cuts a request at 45 s, so every send has a 4 s timeout and each event a 5 s overall deadline (and at
+most 100 devices); a slow or down push service can delay a ticket page by at most a few seconds. Alerts
+run *alongside* the email, not after it, and the SLA job collects its alerts and waits for them once
+after its loop. A device the push service reports as gone (404/410) is deleted; any other failure leaves
+the device alone (a rejected key or an outage must not wipe everyone's alerts). A staff alert that fails
+never blocks the email or the action that triggered it. The `web-push` package is loaded the first time
+it is needed (not at startup), so a problem with it can lose alerts but cannot stop the API from starting.
+
+**Not done / limits.** The Organization Portal is not an app and has no alerts. A device's address
+changing while the app is closed is repaired only when the app is next opened (no background re-register).
+Alerts for staff are team-wide like the emails; there is no per-person "only my tickets" filter yet.
+This has been tested with the push service and the Azure table stubbed; **a real alert on a real phone
+(and iPhone's Home-Screen requirement) still has to be tried on a device.**
 
 ## Testing
 

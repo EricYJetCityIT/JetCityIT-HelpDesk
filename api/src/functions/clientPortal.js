@@ -15,6 +15,7 @@ const { audit } = require('../lib/audit');
 const { storeAttachments, deleteAttachments, downloadAttachment, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { parseLinkedSheets } = require('../lib/smartsheet');
 const { notifyStaffTeam } = require('../lib/staffBroadcast');
+const { staffTicketPush } = require('../lib/push');
 const { clientIp } = require('../lib/ip');
 const { odataEscape } = require('../lib/odata');
 
@@ -282,6 +283,7 @@ ${replyBodyHtml(text, attachments.length)}
         html: `<p>${escapeHtml(meta.name)} (${escapeHtml(meta.email)}) replied on ticket ${escapeHtml(ticketId)}:</p>
 ${replyBodyHtml(text, attachments.length)}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
+        push: staffTicketPush('Requester replied', ticketId, meta.subject),
       });
 
       return { status: 201, jsonBody: { ok: true } };

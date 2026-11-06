@@ -1,5 +1,6 @@
 const { sendMail, SUPPORT_MAILBOX } = require('./graph');
 const { getStaffUpns } = require('./staffAccess');
+const { pushToStaff } = require('./push');
 
 // Broadcasts an event to the WHOLE staff team (the Azure STAFF_UPNS list plus
 // anyone added on the Access tab), not just whoever's assigned or whoever
@@ -17,12 +18,21 @@ const { getStaffUpns } = require('./staffAccess');
 // guarded -- a throw from context.log itself (unlikely, but exactly the
 // kind of thing this function promises never to let through) would
 // otherwise still break that guarantee.
-async function notifyStaffTeam(context, { subject, html, excludeUpn }) {
+async function notifyStaffTeam(context, { subject, html, excludeUpn, push, pushExclude }) {
   try {
     const staff = await getStaffUpns();
     const recipients = excludeUpn ? staff.filter((upn) => upn !== excludeUpn.toLowerCase()) : staff;
     if (!recipients.length) return;
-    await sendMail({ from: SUPPORT_MAILBOX, to: recipients, subject, html });
+    // `push` (optional) is the same news as a phone alert (lib/push.js): sent alongside the email, not
+    // after it, so it adds no time to the caller. pushToStaff never throws, and it only alerts people who
+    // are staff right now. `pushExclude` leaves people out of the ALERT only -- e.g. a new ticket's
+    // assignee, who gets their own, more specific "assigned to you" alert instead.
+    const alert = push
+      ? pushToStaff(context, push, { only: recipients, exclude: pushExclude })
+      : Promise.resolve();
+    const mail = await sendMail({ from: SUPPORT_MAILBOX, to: recipients, subject, html }).then(() => null, (e) => e);
+    await alert;
+    if (mail) throw mail;
   } catch (e) {
     try {
       context.log('STAFF_BROADCAST_FAILED ' + JSON.stringify({ error: e.message }));

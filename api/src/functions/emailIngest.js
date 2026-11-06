@@ -9,6 +9,7 @@ const { normalizeEmail } = require('../lib/clientAccess');
 const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 const { withTickLease } = require('../lib/tickLease');
 const { notifyStaffTeam } = require('../lib/staffBroadcast');
+const { staffTicketPush } = require('../lib/push');
 
 // Reserved partitions, same pattern as CLIENT/CONFIG/RECURRING elsewhere in
 // this table -- neither row kind is 'meta', so neither surfaces in
@@ -319,5 +320,6 @@ ${staleNote}${replyBodyHtml(bodyText, imported.stored.length)}${notImportedHtml}
     html: `<p>${escapeHtml(fromName)} replied (by email) on ticket ${escapeHtml(ticketId)}:</p>
 ${replyBodyHtml(bodyText, imported.stored.length)}${notImportedHtml}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
+    push: staffTicketPush(isStaleClosed ? 'Reply on an old closed ticket' : 'Requester replied', ticketId, meta.subject),
   });
 }

@@ -511,6 +511,7 @@ a.sheet-chip:hover{background:var(--border)}
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <button class="recurring-nav-btn" id="access-nav-btn" type="button" style="display:none">🔑 Access</button>
       <button class="recurring-nav-btn" id="install-app-btn" type="button" data-install-app style="display:none">📱 Get the app</button>
+      <button class="recurring-nav-btn" id="alerts-btn" type="button" data-alerts-button style="display:none">🔔 Turn on alerts</button>
       <button type="button" class="jobs-pill" id="jobs-pill" style="display:none"></button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
@@ -1100,6 +1101,18 @@ async function apiFetch(path, opts){
   return data;
 }
 
+// Phone alerts (push notifications). app-shell.js draws the control and does the browser side; this is how
+// it reaches the API with this page's Microsoft sign-in. See api/src/lib/push.js.
+function staffAlertsCall(action, body){
+  if (action === 'key') return apiFetch('/push/key');
+  return apiFetch('/push/' + action, { method: 'POST', body: JSON.stringify(body || {}) });
+}
+// app-shell.js is loaded at the very end of the page; this waits for it if the sign-in finished first.
+function whenAppShell(fn){
+  if (window.HDApp) { fn(); return; }
+  window.addEventListener('load', function(){ if (window.HDApp) fn(); });
+}
+
 // Attachments need the same bearer-token auth as every other API call, so a
 // plain <img src="..."> can't load them directly -- fetch the bytes with
 // the auth header attached, then hand the caller a blob: object URL.
@@ -1232,6 +1245,14 @@ async function afterSignIn(){
     }
     document.getElementById('app-shell').style.display = 'block';
     currentUserUpn = me.upn;
+    whenAppShell(function(){
+      HDApp.configureAlerts({
+        audience: 'staff',
+        identity: me.upn,
+        pitch: 'You will be alerted to new tickets, tickets assigned to you, and replies from requesters.',
+        call: staffAlertsCall,
+      });
+    });
     // Only people who are staff through Azure may manage access; the API
     // enforces that, this just hides a tab that would only ever say "no".
     document.getElementById('access-nav-btn').style.display = me.isAccessAdmin ? '' : 'none';

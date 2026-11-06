@@ -7,6 +7,7 @@ const { getOrCreateClientToken, buildTrackingLink } = require('./clientAccess');
 const { storeAttachments, deleteAttachments, AttachmentError } = require('./attachments');
 const { getStaffUpns } = require('./staffAccess');
 const { notifyStaffTeam } = require('./staffBroadcast');
+const { pushToStaff, staffTicketPush } = require('./push');
 
 // Shared by the public ticket-submission form (ticketsPublic.js) and any
 // other server-side flow that needs to create a real ticket on someone's
@@ -156,14 +157,22 @@ async function createTicket({ name, email, company, subject, description, catego
   // broadcast, not a per-person one.
   const broadcastLimit = checkRateLimit('staff-broadcast:new-ticket', 30, 60 * 60 * 1000);
   if (broadcastLimit.allowed) {
-    await notifyStaffTeam(context, {
-      subject: `New ticket: ${subject} [${ticketId}]`,
-      html: `<p>New ticket from ${escapeHtml(name)} (${escapeHtml(email)}${company ? ', ' + escapeHtml(company) : ''}):</p>
+    // Both are best-effort and never throw; run together so a slow push service can't stack its wait on the email's.
+    await Promise.all([
+      notifyStaffTeam(context, {
+        subject: `New ticket: ${subject} [${ticketId}]`,
+        html: `<p>New ticket from ${escapeHtml(name)} (${escapeHtml(email)}${company ? ', ' + escapeHtml(company) : ''}):</p>
 <p><strong>${escapeHtml(subject)}</strong></p>
 <p>${escapeHtml(description).replace(/\n/g, '<br/>')}</p>
 <p>${escapeHtml(validCategory)} · ${escapeHtml(validPriority)} priority${assignee ? ' · assigned to ' + escapeHtml(assignee) : ' · unassigned'}</p>
 <p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`,
-    });
+        // The phone alert rides the same cap as the email. The auto-assignee is left out of the team alert
+        // and told separately, so they get ONE alert about this ticket, and it says it is theirs.
+        push: staffTicketPush('New ticket', ticketId, subject),
+        pushExclude: assignee ? [assignee] : [],
+      }),
+      assignee ? pushToStaff(context, staffTicketPush('New ticket assigned to you', ticketId, subject), { only: [assignee] }) : null,
+    ]);
   }
 
   if (assignee) {

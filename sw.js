@@ -114,3 +114,66 @@ self.addEventListener('fetch', (event) => {
   if (req.headers.has('range')) return;
   event.respondWith(networkFirst(req));
 });
+
+// ---------------------------------------------------------------------------------------------
+// Push alerts (see api/src/lib/push.js for the server side)
+// ---------------------------------------------------------------------------------------------
+// The server sends a small JSON message -- { title, body, url, tag } -- and nothing else; it never
+// includes a ticket's text. This worker turns that into a notification, and a tap on it into opening
+// the right page of whichever app (staff console or client tracking page) the alert is for.
+
+// Where a tap may go: only the two app pages, only on this site. The URL arrives in a message, so it is
+// treated like any other input and checked here rather than trusted: anything else opens the home page.
+function alertTarget(raw) {
+  try {
+    const u = new URL(String(raw || '/'), self.location.origin);
+    if (u.origin !== self.location.origin) return '/';
+    if (u.pathname !== '/staff.html' && u.pathname !== '/track.html') return '/';
+    return u.pathname + u.search;
+  } catch (e) {
+    return '/';
+  }
+}
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
+  if (!data || typeof data !== 'object') data = {};
+  // Whatever the message looks like, SOMETHING must be shown: a worker that receives a push and shows
+  // nothing gets its push permission withdrawn by iPhone and Chrome.
+  const title = typeof data.title === 'string' && data.title ? data.title.slice(0, 100) : 'Jet City IT Help Desk';
+  const options = {
+    body: typeof data.body === 'string' ? data.body.slice(0, 200) : '',
+    icon: '/icons/icon-192.png',
+    data: { url: alertTarget(data.url) },
+  };
+  // Same tag = a newer alert about the same ticket replaces the older one instead of stacking up.
+  if (typeof data.tag === 'string' && data.tag) {
+    options.tag = data.tag.slice(0, 100);
+    options.renotify = true;
+  }
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = alertTarget(event.notification.data && event.notification.data.url);
+  event.waitUntil((async () => {
+    const path = new URL(target, self.location.origin).pathname;
+    const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const win of open) {
+      try {
+        if (new URL(win.url).pathname !== path) continue;
+        await win.focus();
+        // An alert about one ticket takes the already-open app straight to it; a plain alert (the test) just
+        // brings the app forward.
+        if (target.indexOf('?') !== -1 && 'navigate' in win) await win.navigate(target);
+        return;
+      } catch (e) {
+        // This window couldn't be reused (closed meanwhile, or not controlled by this worker): try the next,
+        // and open a fresh one if none can be.
+      }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(target);
+  })());
+});

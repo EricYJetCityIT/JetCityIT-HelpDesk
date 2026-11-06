@@ -9,6 +9,7 @@ const { getOrCreateClientToken, buildTrackingLink } = require('../lib/clientAcce
 const { storeAttachments, deleteAttachments, deleteAllAttachmentsForTicket, downloadAttachment, copyAttachmentToTicket, parseAttachments, rejectIfTooLarge, dispositionFor, AttachmentError } = require('../lib/attachments');
 const { resolveLinkedSheets, parseLinkedSheets, SmartsheetError } = require('../lib/smartsheet');
 const { notifyStaffTeam } = require('../lib/staffBroadcast');
+const { pushToStaff, pushToClient, staffTicketPush, clientTicketPush } = require('../lib/push');
 const { findAssetById } = require('../lib/assetsTable');
 const { odataEscape } = require('../lib/odata');
 const { emailDomain } = require('../lib/domain');
@@ -262,6 +263,11 @@ app.http('ticketUpdate', {
       }
 
       if (update.assignee && update.assignee !== previousAssignee) {
+        // The phone alert starts first so it overlaps the email -- except for someone who just assigned the
+        // ticket to themselves.
+        const assignAlert = update.assignee.toLowerCase() !== user.upn.toLowerCase()
+          ? pushToStaff(context, staffTicketPush('Assigned to you', ticketId, meta.subject), { only: [update.assignee] })
+          : null;
         try {
           const html = `<p>You've been assigned a ticket:</p>
 <p><strong>${escapeHtml(meta.subject)}</strong><br/>Ticket ${escapeHtml(ticketId)}</p>
@@ -270,6 +276,7 @@ app.http('ticketUpdate', {
         } catch (e) {
           context.log('ASSIGN_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
         }
+        await assignAlert;
       }
 
       // A bare status change (no reply text) previously notified nobody --
@@ -277,6 +284,9 @@ app.http('ticketUpdate', {
       // since a status change made via a client's own reply goes through a
       // different code path (clientTicketReply) that doesn't hit this route.
       if (update.status && update.status !== meta.status && meta.email) {
+        // Phone alert for a client who has the app (lib/push.js). Started first so it overlaps the email,
+        // and independent of it: it needs no tracking link, so an email problem must not stop it.
+        const statusAlert = pushToClient(context, meta.email, clientTicketPush('Ticket status: ' + update.status, ticketId, meta.subject));
         try {
           const clientToken = await getOrCreateClientToken(meta.email);
           const link = buildTrackingLink(meta.email, clientToken, ticketId);
@@ -288,6 +298,7 @@ app.http('ticketUpdate', {
         } catch (e) {
           context.log('STATUS_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
         }
+        await statusAlert;
       }
 
       return { jsonBody: { ok: true } };
@@ -400,6 +411,8 @@ app.http('ticketReply', {
       audit(context, user, 'ticket.reply', { ticketId });
 
       if (meta.email) {
+        // Phone alert for a client who has the app: no message text, just that there is a reply.
+        const replyAlert = pushToClient(context, meta.email, clientTicketPush('New reply from Jet City IT', ticketId, meta.subject));
         try {
           const clientToken = await getOrCreateClientToken(meta.email);
           const link = buildTrackingLink(meta.email, clientToken, ticketId);
@@ -420,6 +433,7 @@ ${bodyHtml}${sheetsHtml}
         } catch (e) {
           context.log('EMAIL_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e.message }));
         }
+        await replyAlert;
       }
 
       // Only when the CURRENTLY assigned tech is the one replying -- not
@@ -437,6 +451,7 @@ ${text ? `<p>${escapeHtml(text).replace(/\n/g, '<br/>')}</p>` : '<p><em>(no mess
 <p><a href="${escapeHtml(buildStaffTicketLink(ticketId))}">Open in the staff console</a></p>`,
           // No point telling someone they just did the thing they just did.
           excludeUpn: user.upn,
+          push: staffTicketPush('Assignee replied', ticketId, meta.subject),
         });
       }
 

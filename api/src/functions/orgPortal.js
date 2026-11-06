@@ -37,6 +37,7 @@ const {
 } = require('../lib/attachments');
 const { parseLinkedSheets } = require('../lib/smartsheet');
 const { notifyStaffTeam } = require('../lib/staffBroadcast');
+const { staffTicketPush } = require('../lib/push');
 
 function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -747,6 +748,7 @@ ${replyBodyHtml(text, attachments.length)}
         html: `<p><strong>${escapeHtml(session.name)}</strong> (${escapeHtml(session.domain)}) replied on ticket ${escapeHtml(ticketId)}:</p>
 ${replyBodyHtml(text, attachments.length)}
 <p><a href="https://helpdesk.jetcityit.com/staff.html?ticket=${encodeURIComponent(ticketId)}">Open in the staff console</a></p>`,
+        push: staffTicketPush('Requester replied', ticketId, meta.subject),
       });
 
       return { status: 201, jsonBody: { ok: true } };

@@ -4,6 +4,8 @@ const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 const { withTickLease } = require('../lib/tickLease');
+const { getStaffUpns } = require('../lib/staffAccess');
+const { pushToStaff, staffTicketPush } = require('../lib/push');
 
 // Wall-clock response-time targets by priority -- not business-hours-aware,
 // kept deliberately simple for a small team. staff.html has its own copy of
@@ -61,9 +63,18 @@ app.http('slaEscalationCheck', {
           context.log('SLA_ESCALATION_BACKLOG ' + JSON.stringify({ now: batch.length, remaining: candidates.length - batch.length }));
         }
         let emailFailures = 0;
+        // Phone alerts (lib/push.js) are started per ticket but only waited on together, after the loop, so
+        // twenty overdue tickets cost one short wait rather than twenty -- this whole run has 45 seconds.
+        // The ticket's assignee is alerted if they are still on the staff list; otherwise (unassigned, or
+        // the person has since been removed) the whole team is.
+        let staffNow = null;
+        try { staffNow = await getStaffUpns(); } catch (e2) { /* then the alert just goes to the assignee */ }
+        const alerts = [];
         for (const meta of batch) {
           const ticketId = meta.partitionKey;
           const to = meta.assignee || SUPPORT_MAILBOX;
+          const assigneeStaff = meta.assignee && (!staffNow || staffNow.includes(String(meta.assignee).toLowerCase()));
+          alerts.push(pushToStaff(context, staffTicketPush('SLA breach', ticketId, meta.subject), assigneeStaff ? { only: [meta.assignee] } : {}));
           try {
             const html = `<p>This ticket has passed its response-time target and hasn't had a staff reply yet:</p>
   <p><strong>${escapeHtml(meta.subject)}</strong><br/>Ticket ${escapeHtml(ticketId)} · Priority: ${escapeHtml(meta.priority)}</p>
@@ -80,6 +91,7 @@ app.http('slaEscalationCheck', {
           await recordActivity(table, ticketId, `SLA response-time target missed -- escalation sent to ${to}`);
         }
 
+        await Promise.all(alerts); // never rejects (lib/push.js)
         if (batch.length) context.log('SLA_ESCALATIONS_SENT ' + JSON.stringify({ count: batch.length }));
         // Reported to the heartbeat (lib/tickLease.js) so the console shows amber instead of "OK" when
         // the escalation emails themselves are failing -- the tickets are still marked escalated.

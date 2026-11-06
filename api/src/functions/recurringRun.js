@@ -4,6 +4,7 @@ const { sendMail, SUPPORT_MAILBOX } = require('../lib/graph');
 const { escapeHtml } = require('../lib/html');
 const { requireCronSecret, authErrorResponse } = require('../lib/auth');
 const { withTickLease } = require('../lib/tickLease');
+const { pushToStaff, staffTicketPush } = require('../lib/push');
 
 const PARTITION = 'RECURRING';
 
@@ -47,6 +48,9 @@ app.http('recurringTicketsRun', {
         }
 
         let failed = 0; // reported to the heartbeat (lib/tickLease.js), not swallowed into an "OK"
+        // Phone alerts (lib/push.js) are started per ticket but waited on together after the loop, so a slow push
+        // service costs one short wait rather than one per template -- this whole run has 45 seconds.
+        const alerts = [];
         for (const tmpl of due) {
           const ticketId = genTicketId();
           const now = new Date().toISOString();
@@ -88,6 +92,7 @@ app.http('recurringTicketsRun', {
               } catch (e2) {
                 context.log('RECURRING_ASSIGN_NOTIFY_FAILED ' + JSON.stringify({ ticketId, error: e2.message }));
               }
+              alerts.push(pushToStaff(context, staffTicketPush('Recurring ticket assigned to you', ticketId, tmpl.subject), { only: [tmpl.assignee] }));
             }
 
             // The ticket above already exists at this point -- if THIS write
@@ -118,6 +123,7 @@ app.http('recurringTicketsRun', {
           }
         }
 
+        await Promise.all(alerts); // never rejects (lib/push.js)
         if (due.length) context.log('RECURRING_TICKETS_CREATED ' + JSON.stringify({ count: due.length }));
         return { ok: true, created: due.length, problems: failed, problem: failed ? failed + ' recurring ticket(s) could not be created (see logs)' : '' };
       });

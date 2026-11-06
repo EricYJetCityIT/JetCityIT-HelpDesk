@@ -246,6 +246,7 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <a class="hdr-pill-link" href="/faq.html">Help Center</a>
     <a class="hdr-pill-link" href="/">New request</a>
     <button type="button" class="hdr-pill-link" data-install-app style="display:none;font:inherit;font-size:13px;background:none;cursor:pointer">📱 Get the app</button>
+    <button type="button" class="hdr-pill-link" data-alerts-button style="display:none;font:inherit;font-size:13px;background:none;cursor:pointer">🔔 Turn on alerts</button>
     <div class="theme-switcher">
       <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
@@ -479,6 +480,33 @@ async function clientFetch(path, opts){
   return data;
 }
 
+// Phone alerts (push notifications): app-shell.js draws the control and does the browser side; this is how it
+// reaches the API with this person's tracking-link sign-in. Built for a given session so that "Not you" can still
+// tell the server to stop alerting this phone after the session itself has been forgotten.
+function clientAlertsCall(s){
+  return function(action, body){
+    if (action === 'key') return fetch('/api/push/key').then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) throw new Error(d.error || ('Request failed (' + r.status + ')'));
+        return d;
+      });
+    });
+    if (!s) return Promise.reject(new Error('Not signed in'));
+    return clientFetch('/push/' + action, { method: 'POST', body: Object.assign({ email: s.email, token: s.token }, body || {}) });
+  };
+}
+// Calls clientFetch with the live session each time; used while somebody is signed in.
+function liveClientAlertsCall(action, body){ return clientAlertsCall(session)(action, body); }
+function setupAlerts(){
+  if (!session || !window.HDApp) return;
+  HDApp.configureAlerts({
+    audience: 'client',
+    identity: session.email,
+    pitch: 'You will be alerted when a technician replies or your ticket\'s status changes.',
+    call: liveClientAlertsCall,
+  });
+}
+
 function showView(id){
   ['request-view', 'list-view', 'detail-view'].forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
@@ -486,6 +514,12 @@ function showView(id){
 }
 
 function forgetSession(message){
+  // This phone must stop getting that person's alerts: tell the server (using the session being forgotten)
+  // and hide the control until somebody signs in again.
+  if (session && window.HDApp) {
+    HDApp.alertsOff(clientAlertsCall(session)).catch(function(){});
+    HDApp.configureAlerts(null);
+  }
   localStorage.removeItem('hd_client_session');
   session = null;
   showView('request-view');
@@ -785,7 +819,10 @@ document.getElementById('reply-send-btn').addEventListener('click', async functi
 
 // ── Boot ──
 if (session) {
-  const deepLinkTicket = fromQuery ? params.get('ticket') : null;
+  // ?ticket= with no email/token in the link is what a tap on a phone alert opens: the sign-in is the one
+  // already kept on this phone. (The server still only shows a ticket to the address it belongs to.)
+  const deepLinkTicket = params.get('ticket');
+  if (deepLinkTicket && !fromQuery) history.replaceState({}, '', location.pathname);
   if (deepLinkTicket) {
     openTicket(deepLinkTicket);
   } else {
@@ -794,6 +831,8 @@ if (session) {
 } else {
   showView('request-view');
 }
+// app-shell.js (which defines HDApp) is the next script, so alerts are switched on once the page has finished loading.
+document.addEventListener('DOMContentLoaded', setupAlerts);
 </script>
 <script src="/app-shell.js" data-app-name="Help Desk"></script>
 </body>

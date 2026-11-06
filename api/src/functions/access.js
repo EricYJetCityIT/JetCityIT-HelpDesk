@@ -3,6 +3,7 @@ const { requireStaff, requireAccessAdmin, authErrorResponse, AZURE_STAFF_UPNS } 
 const { getUsersByUpns, getUserByUpn, listDirectoryUsers } = require('../lib/graph');
 const { MAX_PAGE_STAFF, normUpn, validUpn, readPageStaff, addPageStaff, removePageStaff } = require('../lib/staffAccess');
 const { audit } = require('../lib/audit');
+const { removeAllSubscriptions } = require('../lib/push');
 
 // Staff console -> Access tab. Lets the people who are staff through AZURE (see
 // requireAccessAdmin) see and change who may use the console, without touching
@@ -169,6 +170,14 @@ app.http('accessRemove', {
         return { status: 404, jsonBody: { error: 'That person is not on the list.' } };
       }
       audit(context, user, 'access.remove', { target });
+      // Their phones stop getting alerts right now -- unless Azure still lists them, in which case they are
+      // still staff. (Alerts also only ever go to people who are on the staff list at the moment of sending,
+      // so this is tidying up, not the safeguard -- a failure here is harmless.)
+      if (!AZURE_STAFF_UPNS.includes(target)) {
+        await removeAllSubscriptions('staff', target).catch((e) => {
+          context.log('ACCESS_PUSH_CLEANUP_FAILED ' + JSON.stringify({ error: String(e && e.message).slice(0, 200) }));
+        });
+      }
       return { jsonBody: { ...(await viewAfterChange()), removed: true } };
     } catch (e) {
       return authErrorResponse(e, context);

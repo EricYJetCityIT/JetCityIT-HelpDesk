@@ -1,0 +1,18 @@
+{
+  "name": "Jet City IT Help Desk (Staff)",
+  "short_name": "HD Staff",
+  "description": "The Jet City IT Help Desk staff console: view, reply to and manage tickets.",
+  "id": "/staff.html",
+  "start_url": "/staff.html?source=pwa",
+  "scope": "/staff.html",
+  "display": "standalone",
+  "background_color": "#052A3F",
+  "theme_color": "#052A3F",
+  "lang": "en",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

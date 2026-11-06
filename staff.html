@@ -13,6 +13,14 @@
 </script>
 <title>Staff Console — Jet City IT Help Desk</title>
 <link rel="icon" type="image/png" href="/logo.png"/>
+<!-- Installable app (see app-shell.js, sw.js, manifest-staff.json) -->
+<link rel="manifest" href="/manifest-staff.json"/>
+<meta name="theme-color" content="#052A3F"/>
+<link rel="apple-touch-icon" href="/icons/icon-180.png"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="HD Staff"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet"/>
@@ -502,6 +510,7 @@ a.sheet-chip:hover{background:var(--border)}
       <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Organization Portal</button>
       <button class="recurring-nav-btn" id="recurring-nav-btn" type="button">↻ Recurring</button>
       <button class="recurring-nav-btn" id="access-nav-btn" type="button" style="display:none">🔑 Access</button>
+      <button class="recurring-nav-btn" id="install-app-btn" type="button" data-install-app style="display:none">📱 Get the app</button>
       <button type="button" class="jobs-pill" id="jobs-pill" style="display:none"></button>
       <span class="user-badge" id="user-badge"></span>
       <div class="theme-switcher">
@@ -3395,5 +3404,6 @@ document.getElementById('org-enable-btn').addEventListener('click', async functi
   }
 });
 </script>
+<script src="/app-shell.js" data-app-name="Help Desk Staff"></script>
 </body>
 </html>

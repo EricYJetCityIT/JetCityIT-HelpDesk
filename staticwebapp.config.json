@@ -10,5 +10,25 @@
   },
   "mimeTypes": {
     ".json": "application/json"
-  }
+  },
+  "routes": [
+    {
+      "route": "/sw.js",
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
+      "route": "/manifest-staff.json",
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
+      "route": "/manifest-client.json",
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    }
+  ]
 }

@@ -1280,6 +1280,44 @@ point of a bulk-onboarding tool. Import always creates new assets; it has
 no concept of updating an existing one by id, even if the file includes an
 `id` column (Export CSV's own `id` column is simply ignored on import).
 
+## Phone apps (installable web apps, not in any app store)
+
+There are two apps, each just a page of this site added to the phone's home screen (the same approach
+as the crew-calendar site): the **staff app** (`/staff.html`, name "HD Staff") and the **client app**
+(`/track.html`, name "Help Desk"). Nothing goes through the App Store or Google Play. Each page shows a
+"📱 Get the app" button on phones/tablets that haven't installed it yet; it opens a short how-to
+(iPhone: Safari's Share, then Add to Home Screen; Android: one-tap Install when Chrome offers it).
+
+Pieces: `manifest-staff.json` / `manifest-client.json` (one each, with their own `id`, `start_url` and
+`scope`, so they install as two separate apps), `icons/` (generated from `logo.png` by
+`tools/make-icons.ps1`; the source logo is only 237 px, so a larger one would give sharper icons),
+`sw.js` (the service worker both apps share), and `app-shell.js` (registers the worker and runs the
+install how-to). The SWA config sends `Cache-Control: no-cache` for `sw.js` and the manifests so an
+update is never held back by a cache.
+
+**What the service worker caches, and what it never touches.** It keeps the app's *pages and static
+files* openable with no signal. It is network-first, so a fresh deploy always wins when there is a
+connection; a saved copy is used only if the network fails or takes over 6 s. It never caches or
+intercepts `/api/*` or any non-GET request (ticket data, attachments, anything with a token), and it
+leaves cross-origin requests (Microsoft sign-in, Graph, Google Fonts) alone, so the sign-in redirect
+behaves as in a normal tab. Pages are stored under their **path only**: the tracking page is opened
+with `?email=…&token=…`, and a secret must not become a cache key (or pile up one copy per query).
+Offline you get the page and sign-in screen, not tickets: data still needs a connection.
+
+**Sign-in inside the installed app.**
+- *Staff app:* the same Microsoft sign-in as the console, with MSAL's cache in `sessionStorage` just
+  like the crew site, so after the app has been fully closed it signs in again (nothing is stored on the
+  phone). This is the deliberately safest setting for a tool that shows client information; "stay
+  signed in" would mean keeping the token in `localStorage`. **Not yet verified on a real iPhone:** an
+  installed iOS app runs sign-in redirects differently from Safari, and this must be tried on a device.
+- *Client app:* the tracking link's session lives in `localStorage`. On **Android** an installed app
+  shares Chrome's storage, so it just works. On **iPhone** the app has private storage and links in
+  emails open in Safari, never in the app, so the app's sign-in screen has a "paste your tracking link"
+  box (shown only inside the installed app): the person copies the link from their email and pastes
+  it. It accepts only this site's `/track.html` link and rebuilds the address from just `email`,
+  `token` and `ticket`, so it can't be used to send anyone elsewhere.
+- Push notifications for both apps are the next piece and are not built yet.
+
 ## Testing
 
 - **Public**: submit a ticket with no auth → 201 with a `ticketId`. Submit

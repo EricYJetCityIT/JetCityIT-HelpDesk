@@ -84,7 +84,11 @@ button{font:inherit;cursor:pointer}
 .hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-logo img{width:100%;height:100%;object-fit:contain}
 .hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px;white-space:nowrap}
-.hdr-right{flex-wrap:wrap}
+.hdr-brand{margin-right:auto}
+/* The theme button is a direct child of the header (not buried in the links row), so on a phone it can sit
+   beside the logo while the links take their own row below. When it lived inside the links row it wrapped onto
+   a line by itself at the far left, and its menu (anchored to the button's right edge) opened off-screen. */
+.hdr-right{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .hdr-right a{font-size:13px;color:var(--text3);text-decoration:none;white-space:nowrap}
 .hdr-right a:hover{color:var(--text2)}
 .hdr-pill-link{font-weight:600;color:var(--text2)!important;border:1px solid var(--border);border-radius:20px;padding:5px 14px!important}
@@ -201,6 +205,8 @@ tbody td{padding:13px 16px;vertical-align:middle}
 .theme-option.active::after{content:'✓';margin-left:auto}
 
 @media(max-width:600px){
+  .hdr-right{order:3;flex-basis:100%;gap:8px}
+  .theme-switcher{order:2}
   .hdr{padding:10px 14px}
   .wrap{padding-left:14px;padding-right:14px}
 }
@@ -212,18 +218,18 @@ tbody td{padding:13px 16px;vertical-align:middle}
     <div class="hdr-logo"><img src="/logo.png" alt="Jet City IT logo"/></div>
     <span class="hdr-name">Jet City IT Help Desk</span>
   </a>
-  <div class="hdr-right" style="display:flex;gap:16px;align-items:center">
+  <div class="hdr-right">
     <a class="hdr-pill-link" href="/faq.html">Help Center</a>
     <a class="hdr-pill-link" href="/track.html">Track one ticket</a>
-    <div class="theme-switcher">
-      <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-      </button>
-      <div class="theme-menu" id="theme-menu" hidden>
-        <button class="theme-option" type="button" data-theme="light">☀️ Light</button>
-        <button class="theme-option" type="button" data-theme="dark">🌙 Dark</button>
-        <button class="theme-option" type="button" data-theme="system">🖥️ System</button>
-      </div>
+  </div>
+  <div class="theme-switcher">
+    <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
+    <div class="theme-menu" id="theme-menu" hidden>
+      <button class="theme-option" type="button" data-theme="light">☀️ Light</button>
+      <button class="theme-option" type="button" data-theme="dark">🌙 Dark</button>
+      <button class="theme-option" type="button" data-theme="system">🖥️ System</button>
     </div>
   </div>
 </div>
@@ -418,7 +424,14 @@ tbody td{padding:13px 16px;vertical-align:middle}
   }
   function closeMenu(){ menu.hidden = true; }
   highlightActive();
-  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; });
+  // The menu is anchored to the button's right edge. If the button sits so far left that the menu would run off the
+  // left edge of the screen, anchor it to the button's left edge instead.
+  function placeMenu(){
+    menu.style.left = '';
+    menu.style.right = '';
+    if (menu.getBoundingClientRect().left < 8) { menu.style.right = 'auto'; menu.style.left = '0'; }
+  }
+  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; if (!menu.hidden) placeMenu(); });
   menu.addEventListener('click', function(e){
     var opt = e.target.closest('.theme-option');
     if (!opt) return;

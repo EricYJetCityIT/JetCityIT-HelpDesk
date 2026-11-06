@@ -962,7 +962,14 @@ a.sheet-chip:hover{background:var(--border)}
   }
   function closeMenu(){ menu.hidden = true; }
   highlightActive();
-  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; });
+  // The menu is anchored to the button's right edge. If the button sits so far left that the menu would run off the
+  // left edge of the screen, anchor it to the button's left edge instead.
+  function placeMenu(){
+    menu.style.left = '';
+    menu.style.right = '';
+    if (menu.getBoundingClientRect().left < 8) { menu.style.right = 'auto'; menu.style.left = '0'; }
+  }
+  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; if (!menu.hidden) placeMenu(); });
   menu.addEventListener('click', function(e){
     var opt = e.target.closest('.theme-option');
     if (!opt) return;

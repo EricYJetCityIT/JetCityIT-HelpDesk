@@ -406,22 +406,35 @@ document.addEventListener('DOMContentLoaded', function(){
     document.getElementById('paste-link-card').style.display = 'block';
   }
 });
+// Some mail systems (Microsoft Defender Safe Links) rewrite every link to pass through their own address and
+// keep the real one URL-encoded in a ?url= parameter, so "Copy Link" copies that wrapper. Look inside it once.
+// Whatever is found must STILL be this site's /track.html with an email and a token: nothing else is accepted.
+function trackingLinkFrom(raw){
+  let u = null;
+  try { u = new URL(raw, location.origin); } catch (x) { return null; }
+  if (u.origin !== location.origin) {
+    const inner = u.searchParams.get('url');
+    if (!inner) return null;
+    try { u = new URL(inner, location.origin); } catch (x) { return null; }
+  }
+  if (u.origin !== location.origin || u.pathname !== '/track.html') return null;
+  const email = u.searchParams.get('email');
+  const token = u.searchParams.get('token');
+  if (!email || !token) return null;
+  return { email: email, token: token, ticket: u.searchParams.get('ticket') };
+}
 document.getElementById('paste-form').addEventListener('submit', function(e){
   e.preventDefault();
   const errEl = document.getElementById('paste-err');
   errEl.style.display = 'none';
-  let u = null;
-  try { u = new URL(document.getElementById('paste-link').value.trim(), location.origin); } catch (x) { u = null; }
-  const pEmail = u && u.searchParams.get('email');
-  const pToken = u && u.searchParams.get('token');
-  if (!u || u.origin !== location.origin || u.pathname !== '/track.html' || !pEmail || !pToken) {
+  const link = trackingLinkFrom(document.getElementById('paste-link').value.trim());
+  if (!link) {
     errEl.textContent = "That doesn't look like a tracking link from your email. Copy the whole link and paste it again.";
     errEl.style.display = 'block';
     return;
   }
-  const pTicket = u.searchParams.get('ticket');
-  location.href = '/track.html?email=' + encodeURIComponent(pEmail) + '&token=' + encodeURIComponent(pToken) +
-    (pTicket ? '&ticket=' + encodeURIComponent(pTicket) : '');
+  location.href = '/track.html?email=' + encodeURIComponent(link.email) + '&token=' + encodeURIComponent(link.token) +
+    (link.ticket ? '&ticket=' + encodeURIComponent(link.ticket) : '');
 });
 
 const fromQuery = params.get('email') && params.get('token')

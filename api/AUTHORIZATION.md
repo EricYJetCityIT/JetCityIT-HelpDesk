@@ -1286,7 +1286,7 @@ There are two apps, each just a page of this site added to the phone's home scre
 as the crew-calendar site): the **staff app** (`/staff.html`, name "HD Staff") and the **client app**
 (`/track.html`, name "Help Desk"). Nothing goes through the App Store or Google Play. Each page shows a
 "📱 Get the app" button on phones/tablets that haven't installed it yet; it opens a short how-to
-(iPhone: Safari's Share, then Add to Home Screen; Android: one-tap Install when Chrome offers it).
+(iPhone: Safari's Share, found under the ⋯ More button in the default compact toolbar, then Add to Home Screen; Android: one-tap Install when Chrome offers it).
 
 Pieces: `manifest-staff.json` / `manifest-client.json` (one each, with their own `id`, `start_url` and
 `scope`, so they install as two separate apps), `icons/` (generated from `logo.png` by
@@ -1304,18 +1304,30 @@ behaves as in a normal tab. Pages are stored under their **path only**: the trac
 with `?email=…&token=…`, and a secret must not become a cache key (or pile up one copy per query).
 Offline you get the page and sign-in screen, not tickets: data still needs a connection.
 
+The cache is never allowed to break the site, because this worker sits in front of every page it
+controls. Every Cache Storage call is isolated and the cache is opened alongside the request, never
+before it, so a browser cache fault (a full phone, or iOS 17.0's `caches.match` "Internal error" bug
+that stopped installed apps from starting when a worker didn't catch it) just means that request goes
+over the network as if there were no worker. A 404 that has a saved copy shows that copy **once** and
+then drops it: a brief post-deploy 404 blip heals on the next load, while a page that was really
+removed can't stay pinned in the cache forever. (A 5xx is an outage, so its saved copy is kept.)
+
 **Sign-in inside the installed app.**
 - *Staff app:* the same Microsoft sign-in as the console, with MSAL's cache in `sessionStorage` just
   like the crew site, so after the app has been fully closed it signs in again (nothing is stored on the
   phone). This is the deliberately safest setting for a tool that shows client information; "stay
-  signed in" would mean keeping the token in `localStorage`. **Not yet verified on a real iPhone:** an
-  installed iOS app runs sign-in redirects differently from Safari, and this must be tried on a device.
+  signed in" would mean keeping the token in `localStorage`. Apple documents that OAuth sign-in on a
+  third-party domain stays inside an installed web app (WWDC23 session 10120, which calls it a
+  heuristic), so this should work, but it **has not been verified on a real iPhone** and must be tried
+  on a device.
 - *Client app:* the tracking link's session lives in `localStorage`. On **Android** an installed app
   shares Chrome's storage, so it just works. On **iPhone** the app has private storage and links in
   emails open in Safari, never in the app, so the app's sign-in screen has a "paste your tracking link"
   box (shown only inside the installed app): the person copies the link from their email and pastes
   it. It accepts only this site's `/track.html` link and rebuilds the address from just `email`,
-  `token` and `ticket`, so it can't be used to send anyone elsewhere.
+  `token` and `ticket`, so it can't be used to send anyone elsewhere. A link wrapped by a mail filter
+  (Microsoft Safe Links keeps the real link URL-encoded in `?url=`) is unwrapped once; what is inside
+  must still be this site's `/track.html` with an email and a token.
 - Push notifications for both apps are the next piece and are not built yet.
 
 ## Testing

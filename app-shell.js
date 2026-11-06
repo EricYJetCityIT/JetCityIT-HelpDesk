@@ -127,9 +127,10 @@
     } else if (isIOS()) {
       var ol = el('ol', null, 'hd-app-steps');
       ol.appendChild(stepItem(['Open this page in ', 'Safari', ' (the blue compass icon).']));
-      ol.appendChild(stepItem(['Tap the ', 'Share', ' button, the square with an arrow pointing up.']));
+      // On current iPhones Safari's default compact toolbar keeps Share under the ⋯ (More) button.
+      ol.appendChild(stepItem(['Tap the ', 'Share', " button, the square with an arrow pointing up. If you don't see it, tap the ", '\u22EF', ' (More) button first, then ', 'Share', '.']));
       ol.appendChild(stepItem(['Scroll down and tap ', 'Add to Home Screen', '.']));
-      ol.appendChild(stepItem(['Tap ', 'Add', ' in the top right corner.']));
+      ol.appendChild(stepItem(['If you see an ', 'Open as Web App', ' switch, leave it on. Then tap ', 'Add', ' in the top right corner.']));
       card.appendChild(ol);
     } else if (isAndroid() || deferredPrompt) {
       if (deferredPrompt) {
@@ -146,7 +147,7 @@
       } else {
         var ol2 = el('ol', null, 'hd-app-steps');
         ol2.appendChild(stepItem(['Open this page in ', 'Chrome', '.']));
-        ol2.appendChild(stepItem(['Tap the ', '⋮', ' menu (top right).']));
+        ol2.appendChild(stepItem(['Tap the ', '\u22EE', ' menu (top right).']));
         ol2.appendChild(stepItem(['Tap ', 'Install app', ' (or ', 'Add to Home screen', ').']));
         card.appendChild(ol2);
       }

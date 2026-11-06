@@ -16,6 +16,12 @@
 //  - Pages are stored under their path ONLY, never the full URL: the client tracking page is
 //    opened with ?email=...&token=... in the address, and a secret must not end up as a cache key
 //    (nor should every query variant pile up its own copy).
+//
+// The cache must never be able to break the site. This worker sits in front of EVERY page it
+// controls, and a browser's Cache Storage can fail (a full phone, a corrupted store, and iOS 17.0
+// had a bug where caches.match threw "Internal error", which stopped installed apps starting
+// when a worker didn't catch it). So every cache call below is isolated: if one throws, the
+// request simply carries on over the network as if there were no cache.
 const CACHE = 'hd-shell-v1';
 const NET_TIMEOUT_MS = 6000;
 
@@ -26,25 +32,48 @@ self.addEventListener('install', () => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     // Drop caches from older versions of this file, then take over open pages.
-    const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    } catch (e) { /* a cache fault must not stop the worker from activating */ }
     await self.clients.claim();
   })());
 });
 
-// The cache key for a request: a page navigation is keyed by its path alone (see above);
-// everything else (scripts, images, fonts, the manifest) by its URL without the query.
+// The cache key for a request: its URL without the query (see above).
 function cacheKeyFor(req) {
   const url = new URL(req.url);
   return url.origin + url.pathname;
 }
 
+// Cache helpers that never throw and never reject: a failure just means "no cache".
+async function openCache() {
+  try { return await caches.open(CACHE); } catch (e) { return null; }
+}
+async function cacheGet(cache, key) {
+  if (!cache) return null;
+  try { return (await cache.match(key)) || null; } catch (e) { return null; }
+}
+function cachePut(cache, key, res) {
+  if (!cache) return;
+  try { cache.put(key, res).catch(() => {}); } catch (e) { /* ignore */ }
+}
+function cacheDelete(cache, key) {
+  if (!cache) return;
+  try { cache.delete(key).catch(() => {}); } catch (e) { /* ignore */ }
+}
+
 async function networkFirst(req) {
-  const cache = await caches.open(CACHE);
   const key = cacheKeyFor(req);
+  // The cache is opened ALONGSIDE the request, never before it: nothing about Cache Storage may
+  // delay, or break, the network fetch.
+  const cachePromise = openCache();
   const net = fetch(req).then((res) => {
     // Only keep good same-origin responses (never errors, redirects or opaque responses).
-    if (res && res.ok && res.type === 'basic') cache.put(key, res.clone()).catch(() => {});
+    if (res && res.ok && res.type === 'basic') {
+      const copy = res.clone();
+      cachePromise.then((cache) => cachePut(cache, key, copy));
+    }
     return res;
   });
   net.catch(() => {}); // a failure that lands after we've answered from cache is not an error
@@ -52,17 +81,25 @@ async function networkFirst(req) {
   const slow = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('slow')), NET_TIMEOUT_MS); });
   try {
     const res = await Promise.race([net, slow]);
-    // The host answered but with a server error / transient 404 (seen briefly after deploys):
-    // prefer a saved good copy over showing that error.
     if (res && !res.ok && res.type === 'basic' && (res.status >= 500 || res.status === 404)) {
-      const hit = await cache.match(key);
-      if (hit) return hit;
+      const cache = await cachePromise;
+      const hit = await cacheGet(cache, key);
+      if (hit) {
+        // A 404 right after a deploy is usually a brief platform blip, so a saved copy is better than an
+        // error page. But a page that was really REMOVED must not stay pinned forever by that copy, so on
+        // a 404 it is served this once and then dropped: a blip heals on the next load (which stores a
+        // fresh copy), a genuinely removed page then 404s as it should. A 5xx is an outage, not a removal,
+        // so its saved copy is kept.
+        if (res.status === 404) cacheDelete(cache, key);
+        return hit;
+      }
     }
     return res;
   } catch (e) {
-    const hit = await cache.match(key);
+    const cache = await cachePromise;
+    const hit = await cacheGet(cache, key);
     if (hit) return hit;
-    return net; // nothing saved yet: wait for the network (or fail the same way it always did)
+    return net; // nothing saved: wait for the network (or fail the same way it always did)
   } finally {
     clearTimeout(timer);
   }

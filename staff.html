@@ -131,6 +131,9 @@ button{font:inherit;cursor:pointer}
 .hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px;white-space:nowrap}
 .hdr-console-tag{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--green-dark);background:var(--green-light);padding:3px 8px;border-radius:6px;white-space:nowrap}
 .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+/* Wrapper for the nav buttons. display:contents makes it vanish on desktop (its children are laid out by .hdr-right as if it
+   weren't there); the phone layout at the end of this stylesheet turns it into a one-line swipeable strip. */
+.hdr-nav{display:contents}
 /* Background-jobs indicator: green = every job ran recently, amber = delayed/never ran, red = a job failed */
 .jobs-pill{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);color:var(--text2);font:inherit;font-size:12px;font-weight:600;padding:5px 10px;border-radius:20px;white-space:nowrap;cursor:pointer}
 .jobs-pill::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
@@ -474,6 +477,96 @@ a.sheet-chip:hover{background:var(--border)}
 
 /* ── Canned responses ── */
 .canned-select{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);margin-bottom:10px;display:block;width:100%}
+/* ── Phone layout ───────────────────────────────────────────────────────────────────────────────────────────
+   Everything here applies only on a phone-sized screen, so the desktop console is unchanged. The aim: the first
+   screen is the work (tickets, the conversation), not a stack of chrome. The header collapses to one row plus a
+   swipeable strip, the Clients box and stat tiles become one-line strips, and the ticket table becomes cards. */
+@media(max-width:700px){
+  /* iPhone Safari zooms the whole page when you tap a field whose text is smaller than 16px, and doesn't zoom back. */
+  input,select,textarea{font-size:16px!important}
+
+  /* Header: logo + theme button on row 1; the nav buttons are one row you swipe sideways. */
+  .hdr{gap:8px 10px;padding:10px 14px}
+  .hdr-left{order:1;margin-right:auto;gap:8px}
+  .hdr-console-tag{display:none}
+  .hdr-right{display:contents}
+  .theme-switcher{order:2}
+  .hdr-nav{display:flex;order:3;flex-basis:100%;gap:8px;overflow-x:auto;padding:2px 28px 4px 0;margin-bottom:-2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
+  .hdr-nav::-webkit-scrollbar{display:none}
+  .hdr-nav>*{flex:none;white-space:nowrap}
+  #alerts-btn{order:-1}
+  body[data-view="detail-view"] .hdr-nav{display:none}
+  .recurring-nav-btn,.analytics-nav-btn{padding:8px 14px;font-size:13px}
+
+  /* Tickets list: filters, stats and search as compact strips. */
+  #console-view{padding-top:12px;padding-bottom:40px}
+  .console-layout{gap:10px}
+  .domain-sidebar{padding:0;background:none;border:none;box-shadow:none}
+  .domain-sidebar-title{display:none}
+  #domain-list{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+  #domain-list::-webkit-scrollbar{display:none}
+  .domain-item{flex:none;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:8px 14px;white-space:nowrap}
+  .domain-item.active{border-color:var(--ink)}
+  .stats-bar{flex-wrap:nowrap;overflow-x:auto;gap:8px;margin-bottom:10px;scrollbar-width:none}
+  .stats-bar::-webkit-scrollbar{display:none}
+  .stat-chip{flex:none;min-width:0;padding:7px 12px}
+  .stat-chip .n{font-size:17px}
+  .toolbar{gap:10px;margin-bottom:12px}
+  .filters{width:100%;overflow-x:auto;scrollbar-width:none}
+  .filters::-webkit-scrollbar{display:none}
+  .filter-btn{flex:none;white-space:nowrap;padding:8px 15px}
+  .toolbar-right{width:100%;flex-wrap:nowrap}
+  .search-input{flex:1;min-width:0;padding:9px 14px}
+  .refresh-btn{flex:none;padding:9px 14px}
+  .export-btn,.bulk-bar,.check-cell,.check-col{display:none!important}
+
+  /* Each ticket is a card: subject + status on top, who/priority, then owner + how long ago. Scoped to the ticket list on
+     purpose: the Recurring and Assets screens (and the Organization accounts) have their own tables, which stay tables. */
+  #console-view .table-card{background:none;border:none;box-shadow:none;overflow:visible}
+  #console-view .table-scroll{overflow:visible}
+  #console-view table,#tickets-tbody{display:block}
+  #console-view thead{display:none}
+  #tickets-tbody tr{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"subject status" "req priority" "assignee updated";gap:5px 12px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:13px 15px;margin-bottom:10px}
+  #tickets-tbody tr:last-child{border-bottom:1px solid var(--border)}
+  #tickets-tbody tr:hover{background:var(--surface)}
+  #tickets-tbody tr:active{background:var(--bg)}
+  #tickets-tbody td{display:block;padding:0;min-width:0}
+  #tickets-tbody td.subject-cell{grid-area:subject;align-self:start;font-size:15px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  #tickets-tbody td.req-cell{grid-area:req;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tickets-tbody td.assignee-cell{grid-area:assignee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tickets-tbody td:nth-child(5){grid-area:status;justify-self:end;align-self:start}
+  #tickets-tbody td:nth-child(6){grid-area:priority;justify-self:end;font-size:12px}
+  #tickets-tbody td.updated-cell{grid-area:updated;justify-self:end;font-size:12px}
+  #tickets-tbody tr.empty-row{display:block;text-align:center;box-shadow:none;background:none;border:none}
+  #tickets-tbody tr.empty-row td{display:block;padding:32px 8px}
+
+  /* Ticket detail: tighter, controls two to a row, and a Send button you can actually hit. */
+  #detail-view{padding-top:10px}
+  .back-link{padding:8px 0;margin-bottom:6px;font-size:14px}
+  .detail-card{padding:16px;margin-bottom:14px}
+  .detail-head{gap:10px;margin-bottom:10px}
+  .detail-head h1{font-size:18px;line-height:1.3}
+  .detail-head>div:last-child{width:100%}
+  .merge-btn,.delete-ticket-btn{flex:1;padding:9px 12px}
+  .meta-grid{gap:12px}
+  .meta-grid .val{overflow-wrap:anywhere}
+  .controls-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .ctrl{min-width:0}
+  .ctrl select{width:100%;padding:9px 10px}
+  .ctrl:nth-child(4){order:1;grid-column:1/-1}
+  .assign-me-btn,.save-meta-btn{order:2;padding:12px 10px;font-size:14px}
+  .save-meta-btn{background:var(--green);color:#fff}
+  .reply-box textarea{min-height:110px}
+  .attach-row{gap:8px}
+  .attach-row input[type=file]{width:100%;font-size:13px;color:var(--text3)}
+  .attach-row input[type=file]::file-selector-button{font:inherit;font-size:13px;font-weight:600;padding:9px 14px;margin-right:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2)}
+  .reply-save-btn,.reply-quicksend-btn,.sheet-picker-btn{padding:9px 14px;font-size:13px}
+  .reply-send-btn{width:100%;padding:14px;font-size:16px}
+  .note-send-btn{padding:10px 18px}
+  .time-box-row{display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:8px}
+  .time-box-row input[type="number"]{width:100%}
+  .time-box-row input[type="text"]{min-width:0}
+}
 </style>
 </head>
 <body>
@@ -511,6 +604,7 @@ a.sheet-chip:hover{background:var(--border)}
       <span class="hdr-console-tag">Staff Console</span>
     </div>
     <div class="hdr-right">
+      <div class="hdr-nav">
       <button class="analytics-nav-btn" id="analytics-nav-btn" type="button">📊 Analytics</button>
       <button class="recurring-nav-btn" id="assets-nav-btn" type="button">🖥️ Assets</button>
       <button class="recurring-nav-btn" id="org-nav-btn" type="button">👥 Organization Portal</button>
@@ -520,6 +614,7 @@ a.sheet-chip:hover{background:var(--border)}
       <button class="recurring-nav-btn" id="alerts-btn" type="button" data-alerts-button style="display:none">🔔 Turn on alerts</button>
       <button type="button" class="jobs-pill" id="jobs-pill" style="display:none"></button>
       <span class="user-badge" id="user-badge"></span>
+      </div>
       <div class="theme-switcher">
         <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
@@ -1299,9 +1394,15 @@ async function afterSignIn(){
 // ── View switching ──
 const ALL_VIEWS = ['console-view', 'detail-view', 'recurring-view', 'analytics-view', 'assets-view', 'org-view', 'access-view'];
 function showView(id){
+  const changed = document.body.getAttribute('data-view') !== id;
   ALL_VIEWS.forEach(function(v){
     document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
   });
+  // Which screen is showing (the phone layout hides the nav strip on a ticket, where the Back link is the way out).
+  document.body.setAttribute('data-view', id);
+  // A different screen starts at its top: tapping a ticket far down a long list used to open it scrolled part-way down the page.
+  // Only when the screen really changes -- re-showing the same one must not move the page.
+  if (changed) window.scrollTo(0, 0);
 }
 function showConsole(){ showView('console-view'); }
 function showDetail(){ showView('detail-view'); }
@@ -2074,8 +2175,12 @@ function escapeHtml(s){
 let currentTicketId = null;
 
 async function openTicket(id){
+  // Opening a DIFFERENT ticket starts at the top. Refreshing the same one (after a reply, a note, logged time...) must
+  // leave the page where it is, so the person still sees what they just sent.
+  const switching = id !== currentTicketId;
   currentTicketId = id;
   showDetail();
+  if (switching) window.scrollTo(0, 0);
   // Any unsent reply/note draft -- typed text, staged image attachments, or
   // a staged Smartsheet link -- belongs to whatever ticket was open before,
   // never to the one being switched to. Without this reset, switching

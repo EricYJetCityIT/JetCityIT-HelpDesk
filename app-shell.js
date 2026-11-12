@@ -9,6 +9,8 @@
 //
 // The page's <script> tag configures it:  data-app-name="Help Desk Staff"
 //
+//     A link with the attribute data-app-guide (it points at a step-by-step install page) is shown on every device until the
+//     app is installed, and hidden inside the installed app.
 //  3. powers the alerts (push notifications) control: any element with data-alerts-button becomes the
 //     button for this device once the page calls HDApp.configureAlerts(...) -- see the Alerts section below.
 (function () {
@@ -56,6 +58,9 @@
     var show = !isStandalone() && isTouchDevice();
     var buttons = document.querySelectorAll('[data-install-app]');
     for (var i = 0; i < buttons.length; i++) buttons[i].style.display = show ? '' : 'none';
+    // Links to the install guide pages: every device, so it can be found (and passed on) from a computer too; not inside the app.
+    var guides = document.querySelectorAll('[data-app-guide]');
+    for (var j = 0; j < guides.length; j++) guides[j].style.display = isStandalone() ? 'none' : '';
   }
 
   // ---- the how-to dialog (built with DOM calls, no HTML strings, so nothing here can inject markup) ----

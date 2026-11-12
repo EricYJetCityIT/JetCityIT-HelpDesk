@@ -1328,6 +1328,11 @@ removed can't stay pinned in the cache forever. (A 5xx is an outage, so its save
   `token` and `ticket`, so it can't be used to send anyone elsewhere. A link wrapped by a mail filter
   (Microsoft Safe Links keeps the real link URL-encoded in `?url=`) is unwrapped once; what is inside
   must still be this site's `/track.html` with an email and a token.
+- Install guides: `staff-app.html` (staff) and `customer-app.html` (customers) are public step-by-step pages with iPhone, Android and
+  computer tabs (the tab for the device in use opens first; `#iphone`, `#android`, `#computer` in the link choose one). They link only
+  to their own audience's app and say to install from the sign-in page, not the guide (adding the guide to the home screen would
+  install the guide). The staff sign-in card and the tracking page header each carry a "Get the app" link to their own guide
+  (`data-app-guide`, hidden inside the installed app by `app-shell.js`); the customer pages carry no staff link.
 - Phone alerts (push notifications) for both apps: see the next section.
 
 ## Phone alerts (push notifications)

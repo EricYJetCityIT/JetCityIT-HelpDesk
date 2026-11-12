@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('hd_theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
+<title>Get the Staff app — Jet City IT Help Desk</title>
+<meta name="robots" content="noindex"/>
+<link rel="icon" type="image/png" href="/logo.png"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F8FA;
+  --surface:#FFFFFF;
+  --border:#E4E7EC;
+  --text:#0F1724;
+  --text2:#4B5565;
+  --text3:#8A93A3;
+  --green:#16A37F;
+  --green-dark:#0F8F6E;
+  --green-light:#E7F7F1;
+  --brand:#052A3F;
+  --brand-hover:#123A50;
+  --shadow-sm:0 1px 2px rgba(15,23,36,.06);
+  --shadow-md:0 8px 40px rgba(15,23,36,.12);
+  --scrim:rgba(247,248,250,.22);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B1119; --surface:#141C27; --border:#26313F;
+    --text:#F2F5F7; --text2:#B6C0CC; --text3:#7C8896;
+    --green:#34C795; --green-dark:#16A37F; --green-light:rgba(52,199,149,.14);
+    --brand:#3CA2DD; --brand-hover:#55AEE0;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 8px 40px rgba(0,0,0,.5);
+    --scrim:rgba(11,17,25,.68);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B1119; --surface:#141C27; --border:#26313F;
+  --text:#F2F5F7; --text2:#B6C0CC; --text3:#7C8896;
+  --green:#34C795; --green-dark:#16A37F; --green-light:rgba(52,199,149,.14);
+  --brand:#3CA2DD; --brand-hover:#55AEE0;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 8px 40px rgba(0,0,0,.5);
+  --scrim:rgba(11,17,25,.68);
+}
+body{
+  font-family:'Public Sans',system-ui,-apple-system,sans-serif;
+  color:var(--text);
+  min-height:100vh;
+  background-image:linear-gradient(var(--scrim),var(--scrim)),url('/hero-bg.jpg');
+  background-size:cover;
+  background-position:center;
+  background-repeat:no-repeat;
+  background-attachment:fixed;
+  background-color:var(--bg);
+}
+a{color:var(--green-dark)}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);min-height:58px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;padding:10px 24px;box-shadow:var(--shadow-sm)}
+.hdr-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-logo img{width:100%;height:100%;object-fit:contain}
+.hdr-name{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;letter-spacing:-.3px;white-space:nowrap}
+.hdr-brand{margin-right:auto}
+/* The links row, with the theme button as its own child of the header: on a phone the button sits beside the logo and
+   the links take a row of their own (a two-column grid), instead of squeezing into the logo's row and breaking
+   ("Staff sign / in"). Same structure as the other public pages. */
+.hdr-right{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.hdr-right a{font-size:13px;color:var(--text3);text-decoration:none;white-space:nowrap}
+.hdr-pill-link{font-weight:600;color:var(--text2)!important;border:1px solid var(--border);border-radius:20px;padding:5px 14px!important}
+.hdr-pill-link:hover{background:var(--bg);color:var(--text)!important}
+@media(max-width:600px){
+  .hdr{padding:10px 14px}
+  .hdr-right{order:3;flex-basis:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .hdr-right .hdr-pill-link{text-align:center;padding:6px 8px!important}
+  .theme-switcher{order:2}
+}
+
+.wrap{max-width:720px;margin:0 auto;padding:56px 24px 80px}
+h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
+.wrap h1{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+.wrap>p.lede{color:var(--text2);font-size:15px;margin-bottom:32px}
+
+
+.theme-switcher{position:relative}
+.theme-btn{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);cursor:pointer;padding:0}
+.theme-btn:hover{background:var(--bg)}
+.theme-btn svg{width:16px;height:16px}
+.theme-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-md);padding:4px;min-width:140px;z-index:50}
+.theme-menu[hidden]{display:none}
+.theme-option{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:none;background:none;border-radius:6px;font:inherit;font-size:13px;color:var(--text2);cursor:pointer;text-align:left}
+.theme-option:hover{background:var(--bg)}
+.theme-option.active{color:var(--text);font-weight:600}
+.theme-option.active::after{content:'✓';margin-left:auto}
+
+
+/* ── App guide ── */
+:root{--btn-fg:#fff}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--btn-fg:#04202F}}
+:root[data-theme="dark"]{--btn-fg:#04202F}
+/* Text sits on cards, not straight on the skyline photo, so it stays readable wherever the photo is busy. */
+.intro{padding:22px 24px}
+.intro h1{margin-bottom:10px}
+.wrap .lede{color:var(--text2);font-size:15px;line-height:1.6;margin:0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm);padding:20px 22px;margin-bottom:22px}
+.card h2{font-size:16px;font-weight:700;margin-bottom:8px;font-family:'Archivo',sans-serif;letter-spacing:-.2px}
+.card p{color:var(--text2);font-size:14px;line-height:1.6;margin:0 0 12px}
+.card p:last-child{margin-bottom:0}
+.btn{display:inline-block;padding:11px 18px;border-radius:9px;background:var(--brand);color:var(--btn-fg)!important;font-weight:600;font-size:14px;text-decoration:none}
+.btn:hover{background:var(--brand-hover)}
+.warn{background:var(--green-light);border:1px solid var(--green-dark);border-radius:12px;padding:14px 16px;margin-bottom:22px;font-size:14px;line-height:1.55;color:var(--text)}
+.warn strong{color:var(--green-dark)}
+.notice{display:none;background:var(--green-light);border:1px solid var(--green-dark);border-radius:12px;padding:14px 16px;margin-bottom:22px;font-size:14px;font-weight:600}
+.notice.show{display:block}
+.desk-hint{display:none;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text2);font-size:14px;line-height:1.55;margin-bottom:22px}
+.desk-hint.show{display:block}
+.desk-hint code{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--text);overflow-wrap:anywhere}
+.device-tabs{display:flex;gap:8px;margin-bottom:12px}
+.device-tab{flex:1;min-width:0;padding:11px 8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);border-radius:10px;font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+.device-tab:hover{background:var(--bg)}
+.device-tab[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:var(--btn-fg)}
+.device-tab:focus-visible,.btn:focus-visible{outline:3px solid var(--green);outline-offset:2px}
+.panel[hidden]{display:none}
+.steps{list-style:none;counter-reset:s;margin:0 0 4px;padding:0}
+.steps li{counter-increment:s;position:relative;padding:0 0 18px 42px;font-size:15px;line-height:1.55;color:var(--text)}
+.steps li:last-child{padding-bottom:6px}
+.steps li::before{content:counter(s);position:absolute;left:0;top:0;width:28px;height:28px;border-radius:50%;background:var(--green-light);color:var(--green-dark);font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}
+.steps .sub{display:block;color:var(--text2);font-size:13.5px;line-height:1.55;margin-top:5px}
+.steps .btn{margin-top:8px}
+.fine{color:var(--text3);font-size:13px;line-height:1.55;margin-top:6px}
+.good ul{margin:0;padding-left:20px}
+.good li{color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:6px}
+.foot{display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text2);font-size:13px;margin-top:2px}
+@media(max-width:480px){.wrap{padding:28px 16px 56px}.card{padding:18px 16px}.btn{display:block;text-align:center}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <a class="hdr-brand" href="/">
+    <div class="hdr-logo">
+      <img src="/logo.png" alt="Jet City IT logo"/>
+    </div>
+    <span class="hdr-name">Jet City IT Help Desk</span>
+  </a>
+  <div class="hdr-right">
+    <a class="hdr-pill-link" href="/staff.html">Staff sign in</a>
+    <a class="hdr-pill-link" href="/faq.html">Help Center</a>
+  </div>
+  <div class="theme-switcher">
+    <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
+    <div class="theme-menu" id="theme-menu" hidden>
+      <button class="theme-option" type="button" data-theme="light">☀️ Light</button>
+      <button class="theme-option" type="button" data-theme="dark">🌙 Dark</button>
+      <button class="theme-option" type="button" data-theme="system">🖥️ System</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="card intro">
+    <h1>Get the Staff app</h1>
+    <p class="lede">Put the staff console on your phone's home screen. It isn't in the App Store or Google Play: it's the Help Desk website added to your home screen, so there is nothing to download from a store and it updates itself. It takes about a minute.</p>
+  </div>
+
+  <div class="notice" id="installed-note">You're already using the app on this device. There's nothing to install.</div>
+  <p class="desk-hint" id="desk-hint">Reading this on a computer? To install the app, open this page on your phone: <code>helpdesk.jetcityit.com/staff-app.html</code></p>
+
+  <div class="warn"><strong>Install from the sign-in page, not from this guide.</strong> The steps below happen on the staff sign-in page. If you add this guide to your home screen instead, you'll get this guide, not the app.</div>
+
+  <div class="device-tabs" role="group" aria-label="Choose your device">
+    <button type="button" class="device-tab" data-device="iphone" aria-pressed="false">iPhone</button>
+    <button type="button" class="device-tab" data-device="android" aria-pressed="false">Android</button>
+    <button type="button" class="device-tab" data-device="computer" aria-pressed="false">Computer</button>
+  </div>
+
+  <div class="card panel" id="panel-iphone" hidden>
+    <h2>iPhone</h2>
+    <ol class="steps">
+      <li>Open the staff sign-in page in <strong>Safari</strong>.<br/><a class="btn" href="/staff.html">Open the staff sign-in</a><span class="sub">Outlook, Teams and other apps open links in their own viewer, and an app can't be installed from there. If that happens, tap the share or &#8943; button and choose <strong>Open in Safari</strong>.</span></li>
+      <li>On that page, tap the <strong>Share</strong> button (the square with an arrow pointing up).<span class="sub">If you don't see it, tap the &#8943; button at the bottom right first, then <strong>Share</strong>.</span></li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>.<span class="sub">If you see an "Open as Web App" switch, leave it on. Then tap <strong>Add</strong>.</span></li>
+      <li>Open <strong>HD Staff</strong> from your home screen (not from Safari) and sign in with your @jetcityit.com Microsoft account.</li>
+      <li>Tap <strong>Turn on alerts</strong> at the top of the screen and tap <strong>Allow</strong>. A test alert should arrive within a few seconds.</li>
+    </ol>
+    <p class="fine">You need iOS 16.4 or later (Settings, General, About shows your version). On an iPhone, alerts only work in the app you opened from the home screen, not in a Safari tab.</p>
+  </div>
+
+  <div class="card panel" id="panel-android" hidden>
+    <h2>Android</h2>
+    <ol class="steps">
+      <li>Open the staff sign-in page in <strong>Chrome</strong>.<br/><a class="btn" href="/staff.html">Open the staff sign-in</a></li>
+      <li>Tap the <strong>&#8942;</strong> menu at the top right of Chrome, then <strong>Install app</strong> (or <strong>Add to Home screen</strong>).</li>
+      <li>Open <strong>HD Staff</strong> from your home screen and sign in with your @jetcityit.com Microsoft account.</li>
+      <li>Tap <strong>Turn on alerts</strong> at the top of the screen and tap <strong>Allow</strong>. A test alert should arrive within a few seconds.</li>
+    </ol>
+    <p class="fine">Once you're signed in, the <strong>Get the app</strong> button at the top of the console also offers a one-tap Install.</p>
+  </div>
+
+  <div class="card panel" id="panel-computer" hidden>
+    <h2>Computer</h2>
+    <ol class="steps">
+      <li>The staff console works in any browser. Open it and sign in with your @jetcityit.com Microsoft account.<br/><a class="btn" href="/staff.html">Open the staff sign-in</a></li>
+      <li>In Chrome or Edge you can also install it as an app: click the install icon at the right end of the address bar, then <strong>Install</strong>.</li>
+      <li>Alerts work on a computer too: click <strong>Turn on alerts</strong> at the top of the console and choose <strong>Allow</strong>.</li>
+    </ol>
+  </div>
+
+  <div class="card good">
+    <h2>Good to know</h2>
+    <ul>
+      <li>You sign in again each time you fully close the app. That is on purpose: nothing about our customers is stored on your phone.</li>
+      <li>Alerts show the ticket's subject only, never the message. Tap one to open that ticket.</li>
+      <li>New-ticket and reply alerts go to the whole team, the same as the emails.</li>
+      <li>To turn alerts off, tap the bell at the top of the app, then <strong>Turn off alerts</strong>.</li>
+      <li>If the app says you don't have access, ask an administrator to add you on the console's Access tab.</li>
+    </ul>
+  </div>
+  <p class="foot">This guide is for Jet City IT staff. Customers have their own app and guide.</p>
+</div>
+
+<script>
+(function(){
+  var STORAGE_KEY = 'hd_theme';
+  var btn = document.getElementById('theme-btn');
+  var menu = document.getElementById('theme-menu');
+  function currentPref(){ try { return localStorage.getItem(STORAGE_KEY) || 'system'; } catch (e) { return 'system'; } }
+  function applyTheme(pref){
+    if (pref === 'dark' || pref === 'light') document.documentElement.setAttribute('data-theme', pref);
+    else document.documentElement.removeAttribute('data-theme');
+  }
+  function highlightActive(){
+    var pref = currentPref();
+    Array.prototype.forEach.call(menu.querySelectorAll('.theme-option'), function(opt){
+      opt.classList.toggle('active', opt.dataset.theme === pref);
+    });
+  }
+  function closeMenu(){ menu.hidden = true; }
+  highlightActive();
+  // The menu is anchored to the button's right edge. If the button sits so far left that the menu would run off the
+  // left edge of the screen, anchor it to the button's left edge instead.
+  function placeMenu(){
+    menu.style.left = '';
+    menu.style.right = '';
+    if (menu.getBoundingClientRect().left < 8) { menu.style.right = 'auto'; menu.style.left = '0'; }
+  }
+  btn.addEventListener('click', function(e){ e.stopPropagation(); menu.hidden = !menu.hidden; if (!menu.hidden) placeMenu(); });
+  menu.addEventListener('click', function(e){
+    var opt = e.target.closest('.theme-option');
+    if (!opt) return;
+    var pref = opt.dataset.theme;
+    try { localStorage.setItem(STORAGE_KEY, pref); } catch (e2) {}
+    applyTheme(pref);
+    highlightActive();
+    closeMenu();
+  });
+  document.addEventListener('click', function(e){
+    if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); });
+})();
+</script>
+<script>
+// Picks the tab for the device you're on (you can still switch), and links like #android open that tab directly.
+(function(){
+  var tabs = document.querySelectorAll('.device-tab');
+  function show(name){
+    Array.prototype.forEach.call(tabs, function(t){ t.setAttribute('aria-pressed', t.dataset.device === name ? 'true' : 'false'); });
+    ['iphone', 'android', 'computer'].forEach(function(d){ document.getElementById('panel-' + d).hidden = (d !== name); });
+  }
+  var ua = navigator.userAgent || '';
+  var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var android = /Android/i.test(ua);
+  var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  var fromHash = (location.hash || '').replace('#', '');
+  var start = (fromHash === 'iphone' || fromHash === 'android' || fromHash === 'computer') ? fromHash : (ios ? 'iphone' : android ? 'android' : 'computer');
+  show(start);
+  Array.prototype.forEach.call(tabs, function(t){ t.addEventListener('click', function(){ show(t.dataset.device); }); });
+  if (standalone) document.getElementById('installed-note').classList.add('show');
+  if (!ios && !android) document.getElementById('desk-hint').classList.add('show');
+})();
+</script>
+</body>
+</html>

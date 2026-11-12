@@ -81,6 +81,7 @@ a{color:var(--green-dark)}
   .hdr{padding:10px 14px}
   .hdr-right{order:3;flex-basis:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .hdr-right .hdr-pill-link{text-align:center;padding:6px 8px!important}
+  .hdr-right [data-app-guide]{grid-column:1/-1}
   .theme-switcher{order:2}
 }
 
@@ -127,6 +128,7 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
   <div class="hdr-right">
     <a class="hdr-pill-link" href="/track.html">Track a ticket</a>
     <a class="hdr-pill-link" href="/staff.html">Staff sign in</a>
+    <a class="hdr-pill-link" data-app-guide href="/customer-app.html">📱 Get the app</a>
   </div>
   <div class="theme-switcher">
     <button class="theme-btn" id="theme-btn" type="button" aria-label="Theme settings" title="Theme">
@@ -237,6 +239,14 @@ h1{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:-.3px}
     if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
   });
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); });
+})();
+</script>
+<script>
+// Inside the installed app there is nothing left to install, so the "Get the app" link goes away.
+(function(){
+  var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  if (!standalone) return;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-app-guide]'), function(a){ a.style.display = 'none'; });
 })();
 </script>
 </body>

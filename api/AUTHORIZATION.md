@@ -1332,7 +1332,9 @@ removed can't stay pinned in the cache forever. (A 5xx is an outage, so its save
   computer tabs (the tab for the device in use opens first; `#iphone`, `#android`, `#computer` in the link choose one). They link only
   to their own audience's app and say to install from the sign-in page, not the guide (adding the guide to the home screen would
   install the guide). The staff sign-in card and the tracking page header each carry a "Get the app" link to their own guide
-  (`data-app-guide`, hidden inside the installed app by `app-shell.js`); the customer pages carry no staff link.
+  (`data-app-guide`, hidden inside the installed app by `app-shell.js`); the customer pages carry no staff link. The home page and the Help
+  Center header also carry a "Get the app" link to the customer guide (so customers can find it without an email); it is not on the
+  Organization pages, whose users have no tracking links.
 - Phone alerts (push notifications) for both apps: see the next section.
 
 ## Phone alerts (push notifications)
